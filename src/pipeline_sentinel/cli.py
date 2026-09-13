@@ -178,10 +178,19 @@ def main() -> int:
         output_dir = Path(args.output).resolve() / dataset.split_name / sequence.sequence_id
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        selected_frame_numbers = sequence.selected_frame_numbers(
+            frame_step=args.frame_step,
+            max_frames=args.max_frames,
+        )
         ground_truth_path: Path | None = None
+        ground_truth_rows: int | None = None
         if sequence.annotation_path is not None:
             ground_truth_path = output_dir / "ground_truth.csv"
-            sequence.normalized_ground_truth().to_csv(ground_truth_path, index=False)
+            ground_truth = sequence.normalized_ground_truth(
+                frame_numbers=selected_frame_numbers,
+            )
+            ground_truth.to_csv(ground_truth_path, index=False)
+            ground_truth_rows = len(ground_truth)
 
         try:
             detector = _make_yolo_detector(args)
@@ -211,6 +220,8 @@ def main() -> int:
                 "sequence_id": sequence.sequence_id,
                 "annotation_path": str(sequence.annotation_path) if sequence.annotation_path else None,
                 "ground_truth_csv": str(ground_truth_path) if ground_truth_path else None,
+                "ground_truth_scope": "processed_frames" if ground_truth_path else None,
+                "ground_truth_rows": ground_truth_rows,
                 "frame_step": args.frame_step,
                 "max_frames": args.max_frames,
                 "timing_note": (
