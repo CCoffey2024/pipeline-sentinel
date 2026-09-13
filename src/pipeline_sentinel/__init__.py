@@ -1,6 +1,6 @@
 """Pipeline Sentinel package."""
 
-from .types import Detection, FrameContext, FrameRecord
+from .types import Alert, Detection, Event, FrameContext, FrameRecord, Track
 
-__all__ = ["Detection", "FrameContext", "FrameRecord"]
-__version__ = "0.4.0"
+__all__ = ["Alert", "Detection", "Event", "FrameContext", "FrameRecord", "Track"]
+__version__ = "0.5.0"
