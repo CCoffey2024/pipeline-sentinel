@@ -74,6 +74,12 @@ class ConfigProvenance:
     sha256: str
 
 
+def default_production_config_path() -> Path:
+    """Return the production profile bundled inside the installed package."""
+
+    return Path(__file__).with_name("production.yaml").resolve()
+
+
 def _mapping(value: Any, name: str) -> dict[str, Any]:
     if value is None:
         return {}
@@ -223,10 +229,24 @@ def parse_production_config(data: dict[str, Any]) -> ProductionConfig:
     )
 
 
-def load_production_config(path: Path) -> tuple[ProductionConfig, ConfigProvenance]:
-    """Load validated YAML plus a content hash for run provenance."""
+def load_production_config(
+    path: Path | None = None,
+) -> tuple[ProductionConfig, ConfigProvenance]:
+    """Load validated YAML plus a content hash for run provenance.
 
-    resolved = Path(path).expanduser().resolve()
+    When no path is supplied, the profile bundled in the installed package is used. For backward
+    compatibility with the repository CLI default, a missing relative ``config/production.yaml``
+    also falls back to the bundled profile.
+    """
+
+    if path is None:
+        resolved = default_production_config_path()
+    else:
+        requested = Path(path).expanduser()
+        resolved = requested.resolve()
+        normalized = requested.as_posix().lower()
+        if not resolved.is_file() and normalized == "config/production.yaml":
+            resolved = default_production_config_path()
     if not resolved.is_file():
         raise FileNotFoundError(resolved)
     raw = resolved.read_bytes()
