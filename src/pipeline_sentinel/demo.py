@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .detectors import GroundTruthDetector
+from .events import ScenarioRoleEventDetector, SeverityAlertPolicy
 from .ingest import OpenCVVideoIngestAdapter
 from .pipeline import PipelineSentinel, RunArtifacts
 from .synthetic import generate_demo_video
@@ -45,5 +46,9 @@ def run_demo(
     eo_manifest.to_csv(interim_dir / "eo_manifest.csv", index=False)
     ir_manifest.to_csv(interim_dir / "ir_manifest.csv", index=False)
 
-    pipeline = PipelineSentinel(GroundTruthDetector(eo_gt))
+    pipeline = PipelineSentinel(
+        GroundTruthDetector(eo_gt),
+        event_detector=ScenarioRoleEventDetector(),
+        alert_policy=SeverityAlertPolicy(minimum_severity="warning"),
+    )
     return pipeline.run_video(eo_video, output_dir / "run")

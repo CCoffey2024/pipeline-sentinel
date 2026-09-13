@@ -1,6 +1,6 @@
 project:
   name: pipeline-sentinel
-  version: 0.4.0
+  version: 0.5.0
 
 ingest:
   sample_every_n: 2
@@ -18,9 +18,27 @@ detector:
     device: null
     class_ids: null
 
+tracking:
+  backend: iou
+  iou_threshold: 0.30
+  max_missed_updates: 2
+
+events:
+  dwell:
+    enabled: false
+    min_hits: 30
+    max_displacement_px: 40.0
+    labels: null
+
+alerts:
+  policy: severity
+  minimum_severity: warning
+
 output:
   annotated_video: true
   detections_csv: true
+  tracks_csv: true
+  events_csv: true
   alerts_csv: true
   run_manifest: true
 

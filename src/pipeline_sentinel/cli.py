@@ -9,8 +9,10 @@ from . import __version__
 from .demo import run_demo
 from .detectors import GroundTruthDetector
 from .evaluation import evaluate_visdrone_run
+from .events import DwellEventDetector, ScenarioRoleEventDetector, SeverityAlertPolicy
 from .ingest import OpenCVVideoIngestAdapter
 from .pipeline import PipelineSentinel, RunArtifacts
+from .tracking import IoUTracker
 from .visdrone import VisDroneDataset
 from .yolo import YoloDependencyError, YoloDetector
 
@@ -31,6 +33,35 @@ def _add_yolo_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_tracking_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--tracker-iou",
+        type=float,
+        default=0.30,
+        help="Minimum same-class IoU for baseline track association",
+    )
+    parser.add_argument(
+        "--tracker-max-missed",
+        type=int,
+        default=2,
+        help="Number of missed frame updates before an unmatched track expires",
+    )
+    parser.add_argument(
+        "--enable-dwell-events",
+        action="store_true",
+        help="Enable baseline persistence/low-displacement events for learned detections",
+    )
+    parser.add_argument("--dwell-min-hits", type=int, default=30)
+    parser.add_argument("--dwell-max-displacement-px", type=float, default=40.0)
+    parser.add_argument(
+        "--dwell-label",
+        dest="dwell_labels",
+        action="append",
+        default=None,
+        help="Restrict dwell events to one label; repeat for multiple labels",
+    )
+
+
 def _make_yolo_detector(args: argparse.Namespace) -> YoloDetector:
     return YoloDetector(
         model_name=args.model,
@@ -42,9 +73,31 @@ def _make_yolo_detector(args: argparse.Namespace) -> YoloDetector:
     )
 
 
+def _make_learned_pipeline(detector: YoloDetector, args: argparse.Namespace) -> PipelineSentinel:
+    tracker = IoUTracker(
+        iou_threshold=args.tracker_iou,
+        max_missed_updates=args.tracker_max_missed,
+    )
+    event_detector = None
+    if args.enable_dwell_events:
+        event_detector = DwellEventDetector(
+            min_hits=args.dwell_min_hits,
+            max_displacement_px=args.dwell_max_displacement_px,
+            labels=set(args.dwell_labels) if args.dwell_labels else None,
+        )
+    return PipelineSentinel(
+        detector,
+        tracker=tracker,
+        event_detector=event_detector,
+        alert_policy=SeverityAlertPolicy(minimum_severity="warning"),
+    )
+
+
 def _print_artifacts(artifacts: RunArtifacts) -> None:
     print(f"Annotated video: {artifacts.annotated_video}")
     print(f"Detections:      {artifacts.detections_csv}")
+    print(f"Tracks:          {artifacts.tracks_csv}")
+    print(f"Events:          {artifacts.events_csv}")
     print(f"Alerts:          {artifacts.alerts_csv}")
     print(f"Run manifest:    {artifacts.run_manifest}")
 
@@ -52,7 +105,7 @@ def _print_artifacts(artifacts: RunArtifacts) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pipeline-sentinel",
-        description="Pipeline Sentinel modular computer-vision prototype",
+        description="Pipeline Sentinel modular computer-vision application",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -81,6 +134,7 @@ def _build_parser() -> argparse.ArgumentParser:
     yolo.add_argument("video", type=Path)
     yolo.add_argument("--output", type=Path, default=Path("outputs/yolo"))
     _add_yolo_arguments(yolo)
+    _add_tracking_arguments(yolo)
     yolo.add_argument("--sensor-id", default="EO_CAM_01")
     yolo.add_argument("--modality", choices=["EO", "IR", "OTHER"], default="EO")
 
@@ -121,6 +175,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Working cadence for timestamps and rendered MP4; VisDrone VID is stored as JPEG frames",
     )
     _add_yolo_arguments(vd_run)
+    _add_tracking_arguments(vd_run)
 
     vd_eval = sub.add_parser(
         "evaluate-visdrone",
@@ -169,7 +224,11 @@ def main() -> int:
         print(f"Extracted {len(manifest)} sampled frames -> {args.manifest}")
         return 0
     elif args.command == "run-reference":
-        pipeline = PipelineSentinel(GroundTruthDetector(args.ground_truth))
+        pipeline = PipelineSentinel(
+            GroundTruthDetector(args.ground_truth),
+            event_detector=ScenarioRoleEventDetector(),
+            alert_policy=SeverityAlertPolicy(minimum_severity="warning"),
+        )
         artifacts = pipeline.run_video(args.video, args.output)
     elif args.command == "run-yolo":
         try:
@@ -178,7 +237,7 @@ def main() -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
 
-        pipeline = PipelineSentinel(detector)
+        pipeline = _make_learned_pipeline(detector, args)
         artifacts = pipeline.run_video(
             args.video,
             args.output,
@@ -225,7 +284,7 @@ def main() -> int:
             f"VisDrone {dataset.split_name}: sequence={sequence.sequence_id}, "
             f"frames={sequence.frame_count}, step={args.frame_step}, max={args.max_frames or 'all'}"
         )
-        pipeline = PipelineSentinel(detector)
+        pipeline = _make_learned_pipeline(detector, args)
         artifacts = pipeline.run_frames(
             sequence.iter_frames(
                 frame_step=args.frame_step,
@@ -253,6 +312,14 @@ def main() -> int:
                 "detector_imgsz": args.imgsz,
                 "detector_device": args.device,
                 "detector_class_ids": args.class_ids,
+                "tracker_iou": args.tracker_iou,
+                "tracker_max_missed": args.tracker_max_missed,
+                "dwell_events_enabled": args.enable_dwell_events,
+                "dwell_min_hits": args.dwell_min_hits if args.enable_dwell_events else None,
+                "dwell_max_displacement_px": (
+                    args.dwell_max_displacement_px if args.enable_dwell_events else None
+                ),
+                "dwell_labels": args.dwell_labels if args.enable_dwell_events else None,
                 "timing_note": (
                     "VisDrone VID is distributed as image sequences; --fps is a declared working "
                     "cadence for timestamps/rendering, not recovered acquisition timing."

@@ -7,6 +7,7 @@ from typing import Any, Literal
 import numpy as np
 
 Modality = Literal["EO", "IR", "OTHER"]
+Severity = Literal["info", "warning", "critical"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +88,79 @@ class Detection:
     @property
     def xyxy(self) -> tuple[int, int, int, int]:
         return self.x1, self.y1, self.x2, self.y2
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class Track:
+    """One detector observation associated with a stable runtime track ID."""
+
+    track_id: int
+    frame_number: int
+    timestamp_s: float
+    label: str
+    confidence: float
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    source: str
+    hits: int
+    first_frame_number: int
+    first_timestamp_s: float
+    scenario_role: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def xyxy(self) -> tuple[int, int, int, int]:
+        return self.x1, self.y1, self.x2, self.y2
+
+    @property
+    def duration_s(self) -> float:
+        return max(0.0, self.timestamp_s - self.first_timestamp_s)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class Event:
+    """Temporal or semantic evidence derived from one or more tracks."""
+
+    event_id: str
+    frame_number: int
+    timestamp_s: float
+    event_type: str
+    severity: Severity
+    source: str
+    message: str
+    track_id: int | None = None
+    label: str | None = None
+    confidence: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class Alert:
+    """Human-facing notification promoted from an event by an alert policy."""
+
+    alert_id: str
+    event_id: str
+    frame_number: int
+    timestamp_s: float
+    alert_type: str
+    severity: Severity
+    source: str
+    message: str
+    track_id: int | None = None
+    label: str | None = None
+    confidence: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

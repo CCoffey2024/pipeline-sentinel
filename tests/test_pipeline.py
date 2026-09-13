@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from pipeline_sentinel.demo import run_demo
-from pipeline_sentinel.pipeline import DETECTION_COLUMNS, PipelineSentinel
+from pipeline_sentinel.pipeline import ALERT_COLUMNS, PipelineSentinel
 from pipeline_sentinel.synthetic import generate_demo_video
 from pipeline_sentinel.types import Detection, FrameContext
 
@@ -35,39 +35,61 @@ def test_end_to_end_reference_demo(tmp_path: Path) -> None:
 
     assert artifacts.annotated_video.exists() and artifacts.annotated_video.stat().st_size > 0
     assert artifacts.detections_csv.exists()
+    assert artifacts.tracks_csv.exists()
+    assert artifacts.events_csv.exists()
     assert artifacts.alerts_csv.exists()
     assert artifacts.run_manifest.exists()
 
     detections = pd.read_csv(artifacts.detections_csv)
+    tracks = pd.read_csv(artifacts.tracks_csv)
+    events = pd.read_csv(artifacts.events_csv)
     alerts = pd.read_csv(artifacts.alerts_csv)
     assert not detections.empty
+    assert not tracks.empty
+    assert not events.empty
     assert not alerts.empty
-    assert "normal_maintenance" not in set(alerts["scenario_role"])
-    assert "intrusion_vehicle" in set(alerts["scenario_role"])
+    assert "normal_maintenance" in set(events["event_type"])
+    assert "normal_maintenance" not in set(alerts["alert_type"])
+    assert "intrusion_vehicle" in set(alerts["alert_type"])
 
     manifest = json.loads(artifacts.run_manifest.read_text(encoding="utf-8"))
     assert manifest["detector_backend"] == "ground_truth"
+    assert manifest["tracker_backend"] == "iou"
+    assert manifest["event_detector"] == "scenario_role"
+    assert manifest["alert_policy"] == "severity"
     assert manifest["frames_processed"] == 120
     assert manifest["detections_emitted"] == len(detections)
+    assert manifest["track_observations_emitted"] == len(tracks)
+    assert manifest["events_emitted"] == len(events)
     assert manifest["alerts_emitted"] == len(alerts)
 
 
-def test_detection_is_not_automatically_an_alert(tmp_path: Path) -> None:
+def test_detection_is_not_automatically_an_event_or_alert(tmp_path: Path) -> None:
     video = tmp_path / "input.mp4"
     gt = tmp_path / "unused_gt.csv"
     generate_demo_video(video, gt, frame_count=3, size=(64, 64))
 
     artifacts = PipelineSentinel(ObservationOnlyDetector()).run_video(video, tmp_path / "run")
     detections = pd.read_csv(artifacts.detections_csv)
+    tracks = pd.read_csv(artifacts.tracks_csv)
+    events = pd.read_csv(artifacts.events_csv)
     alerts = pd.read_csv(artifacts.alerts_csv)
     manifest = json.loads(artifacts.run_manifest.read_text(encoding="utf-8"))
 
     assert len(detections) == 3
+    assert len(tracks) == 3
+    assert tracks["track_id"].nunique() == 1
+    assert events.empty
     assert alerts.empty
-    assert list(alerts.columns) == DETECTION_COLUMNS
+    assert list(alerts.columns) == ALERT_COLUMNS
     assert manifest["detector_backend"] == "observation_only"
+    assert manifest["tracker_backend"] == "iou"
+    assert manifest["event_detector"] is None
     assert manifest["frames_processed"] == 3
     assert manifest["detections_emitted"] == 3
+    assert manifest["track_observations_emitted"] == 3
+    assert manifest["unique_tracks"] == 1
+    assert manifest["events_emitted"] == 0
     assert manifest["alerts_emitted"] == 0
 
 
@@ -93,10 +115,12 @@ def test_pipeline_accepts_image_sequence_frames(tmp_path: Path) -> None:
     )
 
     detections = pd.read_csv(artifacts.detections_csv)
+    tracks = pd.read_csv(artifacts.tracks_csv)
     manifest = json.loads(artifacts.run_manifest.read_text(encoding="utf-8"))
 
     assert len(detections) == 3
     assert detections["frame_number"].tolist() == [10, 11, 12]
+    assert tracks["track_id"].tolist() == [1, 1, 1]
     assert manifest["input_source"] == "fixture-sequence"
     assert manifest["first_frame_number"] == 10
     assert manifest["last_frame_number"] == 12
