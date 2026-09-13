@@ -15,10 +15,11 @@ uv run pytest
 uv run pipeline-sentinel demo --output outputs\acceptance
 ```
 
-Then confirm that these files exist and are non-empty:
+Confirm that the deterministic run produces:
 
 ```text
 outputs/acceptance/run/annotated_video.mp4
+outputs/acceptance/run/detections.csv
 outputs/acceptance/run/alerts.csv
 outputs/acceptance/run/run_manifest.json
 ```
@@ -33,24 +34,35 @@ where you actually want to run the model:
 
 ```powershell
 uv sync --extra yolo --group dev
-uv run pipeline-sentinel run-yolo .\input.mp4 `
-  --output outputs\yolo-acceptance `
+```
+
+The preferred current learned-runtime test uses VisDrone rather than a random local MP4:
+
+```powershell
+uv run pipeline-sentinel visdrone-info `
+  "D:\FMV\VisDrone\VisDrone2019-VID-val"
+
+uv run pipeline-sentinel run-visdrone `
+  "D:\FMV\VisDrone\VisDrone2019-VID-val" `
+  --output outputs\visdrone-acceptance `
+  --max-frames 300 `
   --model yolo26n.pt `
   --conf 0.25 `
   --device cpu
 ```
 
-The `yolo` extra uses the official headless Ultralytics distribution so it remains compatible with
-Pipeline Sentinel's `opencv-python-headless` core dependency rather than installing a second OpenCV
-GUI wheel.
-
-A successful learned-runtime smoke test should produce:
+A successful VisDrone acceptance run should produce, under the selected split/sequence directory:
 
 ```text
-outputs/yolo-acceptance/annotated_video.mp4
-outputs/yolo-acceptance/alerts.csv
-outputs/yolo-acceptance/run_manifest.json
+annotated_video.mp4
+detections.csv
+ground_truth.csv
+alerts.csv
+run_manifest.json
 ```
+
+`detections.csv` should be treated as model output. `ground_truth.csv` is annotation evidence. They
+must remain separate artifacts.
 
 For generic YOLO inference, `alerts.csv` may legitimately contain headers but no rows. YOLO emits
 object detections; temporal mission events and alert policy are a later pipeline stage.
@@ -87,16 +99,36 @@ malformed annotation schemas.
 ### YOLO adapter contract
 
 `test_yolo.py` injects a fake model object that returns result-like boxes, confidences, and class IDs.
-This proves that the adapter:
-
-- passes inference configuration correctly;
-- translates class IDs to labels;
-- normalizes confidences;
-- clips boxes to frame bounds;
-- returns Pipeline Sentinel `Detection` objects;
-- does not leak framework-specific objects downstream.
+This proves that the adapter passes inference configuration correctly, translates class IDs to
+labels, normalizes confidences, clips boxes to frame bounds, and returns only Pipeline Sentinel
+`Detection` objects downstream.
 
 No model weights, Torch runtime, network access, or GPU are required for this test.
+
+### VisDrone dataset adapter
+
+`test_visdrone.py` creates a tiny synthetic VisDrone-like directory tree and verifies:
+
+- train/validation split-name discovery;
+- sequence discovery;
+- image-frame ordering;
+- frame-step and max-frame sampling;
+- native annotation parsing;
+- XYWH -> XYXY normalization;
+- ignored-region handling;
+- VisDrone category labels;
+- conversion into runtime `FrameContext` objects.
+
+No VisDrone dataset download is required in CI.
+
+### Generic frame-sequence orchestration
+
+`test_pipeline.py` now exercises `PipelineSentinel.run_frames()` directly with in-memory frame
+contexts. This proves the application no longer depends on an encoded-video container and can run
+the same detector/orchestration path over VisDrone JPEG sequences.
+
+The test also verifies that every detector observation is written to `detections.csv` while alerts
+remain a separate semantic artifact.
 
 ### Optional dependency failure path
 
@@ -107,46 +139,28 @@ returns a targeted recovery message containing:
 uv sync --extra yolo --group dev
 ```
 
-The test forces the missing-import condition explicitly, so it still behaves deterministically if a
-developer has installed the YOLO extra locally.
-
-### End-to-end application smoke tests
-
-`test_pipeline.py` executes the deterministic reference pipeline, writes the annotated video,
-alerts CSV, and run manifest, and checks that the manifest reports the expected backend and frame
-count.
-
-It also runs an observation-only detector to prove a critical domain rule:
-
-```text
-Detection != Alert
-```
-
-A generic object observation without event semantics must not silently become an operational alert.
-
 ### COCO preparation regression
 
 `test_coco_subset.py` uses a tiny synthetic COCO fixture to prove that category filtering and image
 selection are deterministic without downloading the real COCO dataset in CI.
 
-## Why the default tests do not download models
+## Why default CI does not download models or benchmark data
 
-CI should not unexpectedly download YOLO, DINOv2, MobileNet weights, COCO images, or other large
-external artifacts just to determine whether the core package is healthy.
+CI should not unexpectedly download YOLO, DINOv2, MobileNet weights, COCO images, VisDrone frames,
+or other large external artifacts just to determine whether the package is healthy.
 
-The learned backend therefore has two test levels:
+The learned/data-backed path therefore has two levels:
 
 ```text
-framework-free adapter contract test
+framework-free + synthetic-fixture contract tests
     -> deterministic CI
 
-actual optional runtime + weight test
-    -> explicit workstation/integration acceptance
+actual runtime + weights + local VisDrone data
+    -> explicit workstation/benchmark acceptance
 ```
 
-This separation makes failures easier to diagnose. If the adapter unit test fails, the contract/code
-is broken. If only the workstation runtime fails, investigate the optional dependency, model weight,
-accelerator, driver, or external-runtime environment.
+If the contract test fails, code is broken. If only the workstation path fails, investigate the
+optional runtime, weights, local dataset structure, accelerator/driver, or environment.
 
 ## GitHub Actions
 
@@ -166,8 +180,9 @@ successfully on one workstation.
 
 ## Model evaluation is separate
 
-Model-quality evaluation lives under `benchmarks/`. Software tests ask whether a detector adapter
-obeys the contract. COCO/UAVDT evaluations ask whether the detector is any good.
+Model-quality evaluation lives under `benchmarks/`. Software tests ask whether adapters and runtime
+contracts behave correctly. COCO, VisDrone, and UAVDT answer whether the model performs well under
+progressively more relevant data regimes.
 
 That distinction prevents a low model score from looking like a software crash, and prevents a
 perfectly functioning adapter from being mistaken for a capable model.

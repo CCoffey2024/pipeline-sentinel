@@ -1,10 +1,11 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from pipeline_sentinel.demo import run_demo
-from pipeline_sentinel.pipeline import PipelineSentinel
+from pipeline_sentinel.pipeline import DETECTION_COLUMNS, PipelineSentinel
 from pipeline_sentinel.synthetic import generate_demo_video
 from pipeline_sentinel.types import Detection, FrameContext
 
@@ -33,10 +34,13 @@ def test_end_to_end_reference_demo(tmp_path: Path) -> None:
     artifacts = run_demo(tmp_path / "demo", frame_count=120, size=(320, 180))
 
     assert artifacts.annotated_video.exists() and artifacts.annotated_video.stat().st_size > 0
+    assert artifacts.detections_csv.exists()
     assert artifacts.alerts_csv.exists()
     assert artifacts.run_manifest.exists()
 
+    detections = pd.read_csv(artifacts.detections_csv)
     alerts = pd.read_csv(artifacts.alerts_csv)
+    assert not detections.empty
     assert not alerts.empty
     assert "normal_maintenance" not in set(alerts["scenario_role"])
     assert "intrusion_vehicle" in set(alerts["scenario_role"])
@@ -44,7 +48,7 @@ def test_end_to_end_reference_demo(tmp_path: Path) -> None:
     manifest = json.loads(artifacts.run_manifest.read_text(encoding="utf-8"))
     assert manifest["detector_backend"] == "ground_truth"
     assert manifest["frames_processed"] == 120
-    assert manifest["detections_emitted"] > 0
+    assert manifest["detections_emitted"] == len(detections)
     assert manifest["alerts_emitted"] == len(alerts)
 
 
@@ -54,24 +58,46 @@ def test_detection_is_not_automatically_an_alert(tmp_path: Path) -> None:
     generate_demo_video(video, gt, frame_count=3, size=(64, 64))
 
     artifacts = PipelineSentinel(ObservationOnlyDetector()).run_video(video, tmp_path / "run")
+    detections = pd.read_csv(artifacts.detections_csv)
     alerts = pd.read_csv(artifacts.alerts_csv)
     manifest = json.loads(artifacts.run_manifest.read_text(encoding="utf-8"))
 
+    assert len(detections) == 3
     assert alerts.empty
-    assert list(alerts.columns) == [
-        "frame_number",
-        "timestamp_s",
-        "label",
-        "object_id",
-        "scenario_role",
-        "confidence",
-        "detector",
-        "x1",
-        "y1",
-        "x2",
-        "y2",
-    ]
+    assert list(alerts.columns) == DETECTION_COLUMNS
     assert manifest["detector_backend"] == "observation_only"
     assert manifest["frames_processed"] == 3
     assert manifest["detections_emitted"] == 3
     assert manifest["alerts_emitted"] == 0
+
+
+def test_pipeline_accepts_image_sequence_frames(tmp_path: Path) -> None:
+    frames = [
+        FrameContext(
+            frame_number=10 + index,
+            timestamp_s=index / 5.0,
+            image=np.zeros((48, 64, 3), dtype=np.uint8),
+            source_path=Path(f"frame_{index}.jpg"),
+            sensor_id="VISDRONE:test",
+            modality="EO",
+        )
+        for index in range(3)
+    ]
+
+    artifacts = PipelineSentinel(ObservationOnlyDetector()).run_frames(
+        frames,
+        tmp_path / "sequence",
+        render_fps=5.0,
+        source_name="fixture-sequence",
+        run_metadata={"dataset": "fixture"},
+    )
+
+    detections = pd.read_csv(artifacts.detections_csv)
+    manifest = json.loads(artifacts.run_manifest.read_text(encoding="utf-8"))
+
+    assert len(detections) == 3
+    assert detections["frame_number"].tolist() == [10, 11, 12]
+    assert manifest["input_source"] == "fixture-sequence"
+    assert manifest["first_frame_number"] == 10
+    assert manifest["last_frame_number"] == 12
+    assert manifest["metadata"]["dataset"] == "fixture"

@@ -3,58 +3,61 @@
 ## Architectural goal
 
 Pipeline Sentinel is being refactored from exploratory notebooks into an installable application
-whose runtime depends on **contracts**, not on particular ML frameworks.
+whose runtime depends on **contracts**, not on particular datasets or ML frameworks.
 
 The central design rule is:
 
-> A sensor source or model runtime may change without forcing unrelated downstream code to change.
+> A sensor source, dataset layout, or model runtime may change without forcing unrelated downstream
+> code to change.
 
-OpenCV, Ultralytics YOLO, PyTorch, ONNX Runtime, TensorRT, DINOv2, or a future vendor runtime should
-live behind adapters. The rest of the system consumes stable Pipeline Sentinel types.
+OpenCV video capture, VisDrone image sequences, Ultralytics YOLO, PyTorch, ONNX Runtime, TensorRT,
+DINOv2, or a future vendor runtime should live behind adapters. The rest of the system consumes
+stable Pipeline Sentinel types.
 
 ## Runtime flow
 
 ```text
-video / stream / still imagery
-            |
-            v
-       FrameContext
-            |
-            v
-      Detector contract
-            |
-       +----+----------------+
-       |                     |
-       v                     v
-GroundTruthDetector      YoloDetector
-(test double)           (optional runtime)
-       |                     |
-       +----------+----------+
-                  |
-                  v
-              Detection
-                  |
-          +-------+----------------------+------------------+
-          |                              |                  |
-          v                              v                  v
-       rendering                     tracking          embeddings
-                                         |                  |
-                                         v                  v
-                                       events         anomaly scoring
-                                         |                  |
-                                         +---------+--------+
-                                                   |
-                                             EO/IR fusion
-                                                   |
-                                                   v
-                                              alert policy
-                                                   |
-                                                   v
-                                      CSV / video / API / UI
+encoded video -------------------+
+                                 |
+VisDrone JPEG sequence ----------+--> FrameContext stream
+                                 |
+future stream / still source ----+
+                                      |
+                                      v
+                                Detector contract
+                                      |
+                         +------------+------------+
+                         |                         |
+                         v                         v
+               GroundTruthDetector            YoloDetector
+                  (test double)             (optional runtime)
+                         |                         |
+                         +------------+------------+
+                                      |
+                                      v
+                                  Detection
+                                      |
+                 +--------------------+--------------------+
+                 |                    |                    |
+                 v                    v                    v
+          detections.csv          tracking            embeddings
+                                      |                    |
+                                      v                    v
+                                    events          anomaly scoring
+                                      |                    |
+                                      +---------+----------+
+                                                |
+                                           EO/IR fusion
+                                                |
+                                                v
+                                           alert policy
+                                                |
+                                                v
+                                   CSV / video / API / UI
 ```
 
-v0.2 implements the detector branch through normalized `Detection` objects. Tracking, anomaly
-scoring, fusion, and production alert policy remain future extraction stages.
+v0.3 implements two real source families: encoded video and VisDrone-style image sequences. Both are
+normalized into the same `FrameContext` runtime contract before model inference.
 
 ## Data contracts
 
@@ -66,28 +69,26 @@ manifests and passed between batch-processing stages.
 
 ### `FrameContext`
 
-`FrameContext` is the **runtime frame contract**. It carries:
-
-- frame number;
-- timestamp;
-- in-memory NumPy image;
-- optional source path;
-- sensor identifier;
-- modality.
+`FrameContext` is the **runtime frame contract**. It carries frame number, timestamp, in-memory NumPy
+image, optional source path, sensor identifier, and modality.
 
 This split is intentional. A persisted manifest should not contain a live NumPy image, while a real
-object detector should not need to reopen a JPEG merely to access pixels that are already in memory.
+object detector should not need to reopen an image merely to access pixels that are already in
+memory.
+
+An encoded MP4 and a VisDrone JPEG directory therefore become equivalent downstream:
+
+```text
+VideoCapture frame ----+
+                       +--> FrameContext --> Detector
+JPEG file -------------+
+```
 
 ### `Detection`
 
-`Detection` is the framework-neutral object-observation contract. It contains:
-
-- frame number;
-- normalized XYXY integer coordinates;
-- class label;
-- confidence;
-- source adapter;
-- optional object/event metadata.
+`Detection` is the framework-neutral object-observation contract. It contains normalized XYXY
+coordinates, class label, confidence, source adapter, frame number, and optional object/event
+metadata.
 
 A PyTorch tensor, Ultralytics `Results` object, OpenCV capture handle, pandas row, or provider-specific
 object must not leak past the adapter boundary.
@@ -95,13 +96,50 @@ object must not leak past the adapter boundary.
 Future contracts will likely include `Track`, `Event`, `EmbeddingObservation`, `AnomalyScore`, and
 `Alert`.
 
-## Detector contract evolution
+## Source adapters and orchestration
 
-The first v0.1 detector contract accepted only `frame_number` because the only backend was a
-GroundTruthDetector that could look rows up in a CSV. That interface was sufficient for the test
-double but insufficient for a learned model.
+### Encoded video
 
-v0.2 evolves the contract to:
+`PipelineSentinel.run_video()` remains the convenience entry point for ordinary video files. It uses
+OpenCV to decode frames, turns them into `FrameContext` objects, then delegates to the generic frame
+runtime.
+
+### Generic frame streams
+
+`PipelineSentinel.run_frames()` is the common orchestration path. It accepts any ordered iterable of
+`FrameContext` objects. This is the important source-abstraction boundary added in v0.3.
+
+It lets us add new source types without teaching the detector or downstream logic their storage
+format.
+
+### VisDrone
+
+```text
+VisDrone root
+   |
+   +-- sequences/<sequence-id>/*.jpg
+   +-- annotations/<sequence-id>.txt
+   |
+   v
+VisDroneDataset / VisDroneSequence
+   |
+   v
+FrameContext stream + normalized ground truth
+```
+
+The VisDrone adapter owns dataset-specific knowledge:
+
+- directory discovery;
+- numeric frame ordering;
+- JPEG decoding;
+- native VID annotation parsing;
+- VisDrone class names;
+- XYWH -> XYXY conversion;
+- ignored-region handling.
+
+`YoloDetector` knows none of this.
+
+## Detector contract
 
 ```python
 class Detector(Protocol):
@@ -111,28 +149,10 @@ class Detector(Protocol):
         ...
 ```
 
-This is a normal interface-evolution step. The important property is not that the first interface was
-perfect; it is that the interface was isolated enough to change without rewriting unrelated
-components.
+The ground-truth test backend may ignore the pixel array and look up rows by frame number. A learned
+backend uses the pixels. Both still return the same `Detection` contract.
 
-## Adapter implementations
-
-### Ground-truth test backend
-
-```text
-GT CSV + FrameContext.frame_number
-            |
-            v
-   GroundTruthDetector
-            |
-            v
-        Detection[]
-```
-
-The test backend deliberately ignores frame pixels. It remains useful because it gives integration
-tests a known-correct detector path without network downloads, Torch, CUDA, or model uncertainty.
-
-### YOLO learned backend
+## YOLO adapter
 
 ```text
 FrameContext.image
@@ -153,15 +173,37 @@ Pipeline Sentinel Detection[]
 Only `YoloDetector` understands Ultralytics result objects. `PipelineSentinel` does not import
 Ultralytics or Torch.
 
-The adapter also owns runtime-specific cleanup such as:
+The adapter owns runtime-specific cleanup such as tensor/array conversion, class-ID to label
+conversion, box clipping, confidence normalization, and model metadata.
 
-- tensor/array conversion;
-- class-ID to label conversion;
-- box clipping to image bounds;
-- confidence normalization;
-- model/runtime metadata.
+## Dataset vocabulary stays outside model adapters
 
-This is the practical meaning of putting a framework behind an adapter.
+VisDrone and COCO do not use identical label vocabularies. For example, VisDrone separates
+`pedestrian` and `people`, while a generic COCO-pretrained detector usually emits `person`.
+
+The YOLO adapter therefore preserves the model's native output label. The VisDrone adapter preserves
+the dataset's native annotation label. A benchmark layer will define the mapping explicitly.
+
+This avoids hiding evaluation policy inside runtime code.
+
+## Run artifacts
+
+All runtime sources now produce a common artifact contract:
+
+```text
+annotated_video.mp4
+detections.csv
+alerts.csv
+run_manifest.json
+```
+
+Dataset-backed runs may add source-specific evidence such as:
+
+```text
+ground_truth.csv
+```
+
+`detections.csv` is model output. `ground_truth.csv` is annotation truth. They remain separate.
 
 ## Optional dependencies
 
@@ -177,140 +219,79 @@ The YOLO runtime is installed only when requested:
 uv sync --extra yolo --group dev
 ```
 
-This keeps ordinary ETL, manifest, synthetic-data, and reference-pipeline tests independent of a
-large ML runtime. Future ONNX or TensorRT backends can follow the same pattern rather than forcing
-every deployment target to install every framework.
+VisDrone itself is not a Python dependency. Its dataset bytes remain external local data supplied by
+path.
 
 ## Detection is not alerting
-
-This boundary is important:
 
 ```text
 object detection != mission event != alert
 ```
 
-A generic detector can say:
+A generic detector can say `person at box X` or `car at box Y`. It cannot, from one frame alone,
+reliably assert loitering, intrusion, suspicious stop, or protected-corridor crossing.
 
-```text
-person at box X
-car at box Y
-```
+Therefore generic YOLO detections are rendered and written to `detections.csv` but do not become
+alerts unless a later event/policy layer supplies mission semantics.
 
-It cannot, from that single observation alone, reliably say:
-
-```text
-loitering
-intrusion
-suspicious stop
-crossed protected corridor
-```
-
-Those require temporal association, geometry, policy, or other context.
-
-Therefore a YOLO `Detection` with no `scenario_role` is rendered and counted but does **not** become
-an alert. The GroundTruthDetector carries scenario roles only so the deterministic integration test
-can continue exercising alert artifact generation until the event/alert layers are extracted.
-
-Notebook 05 is the natural next place to build that boundary properly:
+Notebook 05 is the natural next place to build:
 
 ```text
 Detection -> Track -> Event -> Alert policy
 ```
 
-## Domain components
+## Testing strategy
 
-Domain components operate on Pipeline Sentinel contracts rather than vendor objects. Tracking,
-anomaly scoring, sensor fusion, and alert policy belong here.
-
-For example, anomaly scoring should accept embeddings through an embedding contract; it should not
-know whether vectors came from HOG, DINOv2, or another representation model.
-
-## Orchestration
-
-`pipeline.py` is intentionally thin. Its job is to coordinate components, preserve ordering, collect
-artifacts, and surface errors. It should not contain model-specific preprocessing or training logic.
-
-If `pipeline.py` ever needs code like:
-
-```python
-from ultralytics import YOLO
-```
-
-that is a warning that framework-specific behavior has leaked out of an adapter.
-
-## Application interfaces
-
-The CLI is the first application interface. A later REST API, desktop client, Streamlit UI, or edge
-service should call the same package rather than reimplementing the pipeline.
+The project separates source-contract tests, model-adapter tests, and real-data evaluation:
 
 ```text
-CLI --------+
-REST API ---+--> PipelineSentinel --> components
-UI ---------+
+synthetic VisDrone fixture
+    -> Does dataset discovery/annotation parsing work?
+
+fake YOLO model
+    -> Does model normalization obey the Detector contract?
+
+PipelineSentinel.run_frames fixture
+    -> Can generic frame streams execute end-to-end?
+
+local VisDrone val + real YOLO weights
+    -> Does the optional runtime execute on real aerial imagery?
+
+benchmark evaluator
+    -> How good are the predictions?
 ```
 
-## Repository boundaries
-
-```text
-src/pipeline_sentinel/   production/runtime package
-tests/                   automated correctness checks
-notebooks/learning/      R&D and instructional record
-benchmarks/              external evaluation definitions and tooling
-scripts/                 developer/data-preparation utilities
-config/                  version-controlled default behavior
-docs/                    architecture, migration, validation notes
-outputs/                 generated runtime artifacts; not committed
-data/                    local data workspace; dataset bytes not committed
-```
-
-The runtime package must never require a notebook to have been executed first.
-
-## Testing strategy for adapters
-
-The YOLO adapter is unit-tested with an injected fake model object. This lets CI test the most
-important contract behavior without installing Ultralytics, downloading weights, or requiring a GPU:
-
-```text
-fake framework result
-        |
-        v
-    YoloDetector
-        |
-        v
-normalized Detection objects
-```
-
-A separate workstation/runtime test can then answer the different question:
-
-> Does the actual optional model runtime install and execute on this machine?
-
-Keeping those questions separate dramatically improves failure diagnosis.
+CI does not need benchmark downloads or model weights to prove the software contracts are healthy.
 
 ## Evaluation layers
 
-Pipeline Sentinel separates software correctness from model quality:
-
 ```text
 unit tests
-    -> Does a component obey its contract?
+    -> component correctness
 
-synthetic integration test
-    -> Does the complete application execute predictably?
+synthetic integration
+    -> deterministic application correctness
 
 COCO subset
-    -> Does a generic object detector behave sensibly on independent real imagery?
+    -> generic detector sanity
 
-UAVDT / aerial benchmark
-    -> Does performance survive aerial/FMV domain shift?
+VisDrone validation
+    -> aerial-video performance and small-object behavior
 
-mission-specific evaluation
-    -> Does the system satisfy the operational requirement?
+UAVDT
+    -> independent aerial/FMV cross-dataset shift
+
+mission-specific held-out data
+    -> operating-envelope evidence
 ```
 
-A high COCO score is not evidence of good FMV performance. It is one layer of evidence.
+A strong COCO result is not evidence of strong aerial-FMV performance. A strong VisDrone result is
+also not proof of mission performance; it is a better, more relevant layer of evidence.
 
 ## Definition of a healthy architecture
 
-A future model replacement should normally require edits inside one adapter, its configuration, and
-its tests. If replacing YOLO forces changes throughout tracking, fusion, alerting, rendering, and
-the CLI, the adapter boundary has failed.
+A new dataset should normally require a source adapter plus its tests and benchmark documentation. A
+new detector should normally require one detector adapter plus its tests and configuration.
+
+If adding VisDrone forces YOLO internals to change, or replacing YOLO forces VisDrone parsing to
+change, the boundaries have failed.

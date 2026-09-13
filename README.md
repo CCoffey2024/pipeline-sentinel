@@ -4,29 +4,33 @@ Pipeline Sentinel is a modular computer-vision prototype for turning video/senso
 runtime contracts, detections, temporal/event evidence, and human-facing alerts.
 
 The project began as a sequence of learning notebooks. The application is being extracted from those
-notebooks so model runtimes can be swapped without rewriting the pipeline.
+notebooks so data sources and model runtimes can be swapped without rewriting the pipeline.
 
 > **Scope:** defensive sensing, detection, tracking, anomaly scoring, and human-facing alerts for a
 > fictional pipeline corridor. No automated engagement or weapons logic.
 
-## v0.2 milestone — first learned detector adapter
+## v0.3 milestone — VisDrone becomes a first-class dataset
 
-v0.1 established the software foundation. v0.2 adds the first real model-runtime boundary:
+v0.1 established the software foundation. v0.2 added the first learned detector adapter. v0.3 moves
+our learned-backend testing from arbitrary local videos to a repeatable aerial benchmark source:
+**VisDrone2019-VID**.
+
+Key changes:
 
 - `FrameRecord` remains the serializable ETL/manifest contract;
-- `FrameContext` carries in-memory pixels between runtime components;
-- the `Detector` protocol now consumes `FrameContext`;
-- `GroundTruthDetector` remains the deterministic software test double;
-- `YoloDetector` wraps Ultralytics behind the same `Detection` output contract;
-- Ultralytics/Torch remain optional rather than core dependencies;
-- `pipeline-sentinel run-yolo` exposes the learned backend through the CLI;
-- framework-free fake-model tests validate YOLO result normalization without downloading weights;
-- detections and mission alerts are explicitly separated.
+- `FrameContext` remains the in-memory runtime contract;
+- `PipelineSentinel.run_frames()` now accepts generic ordered frame streams, not only encoded MP4;
+- `VisDroneDataset` discovers `sequences/` and `annotations/` under a VisDrone VID root;
+- `VisDroneSequence` decodes the JPEG frame sequence directly into `FrameContext` objects;
+- native VisDrone VID annotations are parsed into normalized XYXY ground truth;
+- `pipeline-sentinel visdrone-info` validates and inventories a local dataset root;
+- `pipeline-sentinel run-visdrone` runs the existing YOLO adapter directly over a VisDrone sequence;
+- every run now writes `detections.csv` in addition to alerts/video/manifest;
+- a normalized `ground_truth.csv` is emitted for VisDrone sequences that have annotations.
 
-The central design rule is still that `PipelineSentinel` consumes Pipeline Sentinel contracts, not
-Ultralytics, Torch, or another vendor's result objects.
+The runtime still depends on Pipeline Sentinel contracts rather than Ultralytics/Torch objects.
 
-## Quick start — core application
+## Core application acceptance
 
 ```powershell
 git clone https://github.com/CCoffey2024/pipeline-sentinel.git
@@ -38,29 +42,24 @@ uv run pytest
 uv run pipeline-sentinel demo --output outputs\demo
 ```
 
-The deterministic demo produces an annotated video, alerts CSV, and run manifest under the selected
-output root.
+The deterministic demo produces:
 
-Run the package against an arbitrary video for ETL only:
-
-```powershell
-uv run pipeline-sentinel extract input.mp4 `
-  --frames-dir data\interim\frames\mission_001 `
-  --manifest data\interim\mission_001_manifest.csv `
-  --sensor-id EO_CAM_01 `
-  --modality EO `
-  --sample-every 2
+```text
+annotated_video.mp4
+detections.csv
+alerts.csv
+run_manifest.json
 ```
 
 ## Optional YOLO backend
 
-The learned detector is deliberately an optional install:
+Install the learned backend separately:
 
 ```powershell
 uv sync --extra yolo --group dev
 ```
 
-Then run YOLO through the same application pipeline:
+YOLO still works with an ordinary encoded video:
 
 ```powershell
 uv run pipeline-sentinel run-yolo .\input.mp4 `
@@ -70,29 +69,160 @@ uv run pipeline-sentinel run-yolo .\input.mp4 `
   --device cpu
 ```
 
-Use `--class-id` repeatedly to restrict inference to selected class IDs, for example:
+But our preferred repeatable aerial test path is now VisDrone.
 
-```powershell
-uv run pipeline-sentinel run-yolo .\input.mp4 `
-  --class-id 0 `
-  --class-id 2 `
-  --class-id 5 `
-  --class-id 7
+## VisDrone2019-VID workflow
+
+Pipeline Sentinel expects the standard VisDrone VID layout:
+
+```text
+VisDrone2019-VID-val/
+├── annotations/
+│   ├── <sequence>.txt
+│   └── ...
+└── sequences/
+    ├── <sequence>/
+    │   ├── 0000001.jpg
+    │   ├── 0000002.jpg
+    │   └── ...
+    └── ...
 ```
 
-When a named pretrained weight file is not already present locally, the model runtime may obtain it
-on first use. Model weights (`*.pt`, `*.onnx`, TensorRT engines, etc.) are intentionally excluded from
+For the current Windows workstation the local roots are:
+
+```text
+D:\FMV\VisDrone\VisDrone2019-VID-train
+D:\FMV\VisDrone\VisDrone2019-VID-val
+```
+
+These local paths are examples only; dataset bytes and machine-specific paths are not committed to
 Git.
 
-### Detection is not alerting
+### 1. Inspect the validation split
 
-The YOLO adapter emits normalized object observations such as `person`, `car`, or `truck`. Those
-objects are drawn on the annotated video and counted in the run manifest, but they are **not**
-automatically written as alerts. Mission semantics such as intrusion, loitering, or other temporal
-behavior belong to the tracking/event/alert stages that follow detection.
+```powershell
+uv run pipeline-sentinel visdrone-info `
+  "D:\FMV\VisDrone\VisDrone2019-VID-val"
+```
+
+This validates the root and prints the discovered sequence IDs, frame counts, and annotation status.
+
+Use the **validation split first** for zero-shot model evaluation. The train split should be reserved
+for model fitting/fine-tuning or training-time analysis so we do not quietly evaluate on data we
+trained against.
+
+### 2. Quick YOLO acceptance run on a real aerial sequence
+
+If no `--sequence` is given, the first sequence in sorted order is used:
+
+```powershell
+uv run pipeline-sentinel run-visdrone `
+  "D:\FMV\VisDrone\VisDrone2019-VID-val" `
+  --output outputs\visdrone `
+  --max-frames 300 `
+  --model yolo26n.pt `
+  --conf 0.25 `
+  --device cpu
+```
+
+For an explicit sequence:
+
+```powershell
+uv run pipeline-sentinel run-visdrone `
+  "D:\FMV\VisDrone\VisDrone2019-VID-val" `
+  --sequence uav0000086_00000_v `
+  --output outputs\visdrone `
+  --max-frames 300 `
+  --model yolo26n.pt `
+  --device cpu
+```
+
+The sequence run is written under:
+
+```text
+outputs/visdrone/val/<sequence-id>/
+├── annotated_video.mp4
+├── detections.csv
+├── ground_truth.csv
+├── alerts.csv
+└── run_manifest.json
+```
+
+`detections.csv` is the learned model output. `ground_truth.csv` is the normalized VisDrone annotation
+record. The next benchmark step will compare these two explicitly rather than judging performance by
+eye.
+
+### 3. Process sparse frames for a fast experiment
+
+```powershell
+uv run pipeline-sentinel run-visdrone `
+  "D:\FMV\VisDrone\VisDrone2019-VID-val" `
+  --frame-step 5 `
+  --max-frames 200 `
+  --output outputs\visdrone-sparse `
+  --device cpu
+```
+
+VisDrone VID is distributed as image sequences rather than encoded videos. `--fps` therefore sets a
+**working cadence** for Pipeline Sentinel timestamps and the generated annotated MP4; it is not a
+claim that we recovered the original acquisition frame rate from the JPEG files.
+
+## VisDrone annotation contract
+
+Pipeline Sentinel parses the native VID fields:
+
+```text
+frame_index,target_id,bbox_left,bbox_top,bbox_width,bbox_height,
+score,object_category,truncation,occlusion
+```
+
+and adds normalized:
+
+```text
+label,x1,y1,x2,y2,ignored
+```
+
+The native VisDrone categories are preserved rather than pretending they are identical to COCO.
+That matters because the class vocabularies do not line up exactly: for example VisDrone separates
+`pedestrian` and `people`, while a generic COCO-pretrained YOLO model normally emits `person`.
+Class mapping and formal quality metrics therefore belong in the benchmark layer, not inside the
+runtime adapter.
+
+## Detection is not alerting
+
+A YOLO object observation such as `car`, `person`, or `truck` is a **detection**, not a mission alert.
+YOLO observations are drawn and saved to `detections.csv`, but they are not automatically promoted to
+intrusion/loitering alerts. Those semantics belong to tracking/event logic.
 
 The deterministic `GroundTruthDetector` carries `scenario_role` only so the software integration
 path can continue to test known alert behavior.
+
+## Architecture
+
+```text
+encoded video -------------------+
+                                 |
+VisDrone JPEG sequence ----------+--> FrameContext stream
+                                      |
+                                      v
+                                Detector contract
+                                      |
+                         +------------+------------+
+                         |                         |
+                 GroundTruthDetector          YoloDetector
+                         |                         |
+                         +------------+------------+
+                                      |
+                                      v
+                                  Detection
+                                      |
+                         detections.csv / rendering
+                                      |
+                         future tracking -> events -> alerts
+```
+
+`pipeline.py` does not import Ultralytics or Torch. Dataset-specific layout knowledge lives in the
+VisDrone adapter; model-specific result handling lives in the YOLO adapter.
 
 ## Repository map
 
@@ -110,92 +240,38 @@ pipeline-sentinel/
 └── tests/                   deterministic automated tests
 ```
 
-## Architecture
-
-```text
-video / stream
-      |
-      v
- FrameContext
-      |
-      v
- Detector contract
-      |
-      +---------- GroundTruthDetector   (test double)
-      |
-      +---------- YoloDetector          (optional learned backend)
-      |
-      v
- Detection contract
-      |
-      +---------- rendering / run metrics
-      |
-      +---------- future tracking -> events -> alert policy
-      |
-      +---------- future embeddings -> anomaly scoring
-      |
-      +---------- future EO/IR fusion
-```
-
-`pipeline.py` does not import Ultralytics or Torch. The framework-specific runtime stays inside the
-YOLO adapter and is translated immediately into Pipeline Sentinel `Detection` objects.
-
 Read more:
 
 - `docs/architecture.md` — component boundaries and design rules.
-- `docs/yolo-adapter.md` — first learned-runtime extraction and adapter mechanics.
+- `docs/yolo-adapter.md` — learned-runtime adapter mechanics.
+- `docs/visdrone.md` — VisDrone data/source adapter and benchmark workflow.
 - `docs/migration-plan.md` — Notebook 01–09 extraction map.
 - `docs/testing.md` — local acceptance and CI strategy.
 
-## Notebooks
-
-The notebooks remain the engineering/R&D record and the place for plots, experiments, model
-comparisons, and explanations. They should increasingly import package code instead of defining
-production logic in cells.
-
-The repository currently preserves the Pipeline Sentinel notebook snapshots that were available in
-the project archive: Notebook 01, the repaired Notebook 03 classifier/MobileNet path, and the fixed
-Notebook 06 DINOv2 anomaly lesson. The remaining lessons are documented in
-`notebooks/learning/README.md` and can be reconciled from the local learning workspace as we migrate
-them.
-
-## COCO and other benchmarks
-
-COCO is an external benchmark, not a runtime dependency. Dataset bytes are excluded from Git.
-`scripts/prepare_coco_subset.py` creates a deterministic smaller COCO-format subset from any standard
-COCO export, including a Roboflow export.
-
-Evaluation progression:
+## Benchmark progression
 
 ```text
-synthetic integration test -> COCO generic benchmark -> UAVDT aerial/FMV benchmark
+synthetic integration
+    -> COCO generic sanity check
+    -> VisDrone aerial-video validation
+    -> UAVDT aerial/FMV cross-dataset validation
+    -> mission-specific held-out evidence
 ```
 
-See `benchmarks/README.md` and `benchmarks/coco/README.md`.
+See `benchmarks/README.md`, `benchmarks/coco/README.md`, and `benchmarks/visdrone/README.md`.
 
 ## External runtime licensing
 
 Pipeline Sentinel does not vendor Ultralytics source code or pretrained weights. The optional YOLO
-extra installs an external runtime package. Review the upstream runtime/model licensing terms before
+extra installs an external runtime package. Review upstream runtime/model licensing terms before
 using that backend in a commercial or otherwise distributed product.
 
 ## Next extraction milestones
 
-1. Notebook 05 -> tracker and event contracts.
-2. Notebook 06 -> HOG/DINOv2 embedder adapters + anomaly scorer.
-3. Notebook 07 -> EO/IR fusion component.
-4. Notebook 03 -> classifier component where it adds value after proposal generation.
-5. Notebook 08 -> repeatable benchmark command, including COCO/UAVDT.
-6. Notebook 09 -> retire notebook-only orchestration in favor of the CLI/package.
-
-The software acceptance contract remains:
-
-```text
-git clone -> uv sync -> uv run ruff check . -> uv run pytest -> uv run pipeline-sentinel demo
-```
-
-The optional learned-detector acceptance path adds:
-
-```text
-uv sync --extra yolo --group dev -> pipeline-sentinel run-yolo <video>
-```
+1. Add repeatable VisDrone prediction-vs-ground-truth metrics and shared-class mapping.
+2. Notebook 05 -> tracker and event contracts.
+3. Notebook 06 -> HOG/DINOv2 embedder adapters + anomaly scorer.
+4. Notebook 07 -> EO/IR fusion component.
+5. Notebook 03 -> classifier component where it adds value after proposal generation.
+6. Notebook 08 -> repeatable multi-dataset model bakeoff.
+7. Notebook 09 -> retire notebook-only orchestration in favor of the CLI/package.
