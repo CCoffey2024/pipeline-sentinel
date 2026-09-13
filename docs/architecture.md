@@ -2,14 +2,14 @@
 
 ## Architectural goal
 
-Pipeline Sentinel is being refactored from a sequence of exploratory notebooks into a small,
-installable application whose runtime depends on **contracts**, not on particular ML frameworks.
+Pipeline Sentinel is being refactored from exploratory notebooks into an installable application
+whose runtime depends on **contracts**, not on particular ML frameworks.
 
 The central design rule is:
 
 > A sensor source or model runtime may change without forcing unrelated downstream code to change.
 
-That means OpenCV, YOLO, PyTorch, ONNX Runtime, TensorRT, DINOv2, or a future vendor runtime should
+OpenCV, Ultralytics YOLO, PyTorch, ONNX Runtime, TensorRT, DINOv2, or a future vendor runtime should
 live behind adapters. The rest of the system consumes stable Pipeline Sentinel types.
 
 ## Runtime flow
@@ -18,90 +18,214 @@ live behind adapters. The rest of the system consumes stable Pipeline Sentinel t
 video / stream / still imagery
             |
             v
-      Ingest Adapter
-            |
-            v
-       FrameRecord
+       FrameContext
             |
             v
       Detector contract
             |
-            v
-        Detection
+       +----+----------------+
+       |                     |
+       v                     v
+GroundTruthDetector      YoloDetector
+(test double)           (optional runtime)
+       |                     |
+       +----------+----------+
+                  |
+                  v
+              Detection
+                  |
+          +-------+----------------------+------------------+
+          |                              |                  |
+          v                              v                  v
+       rendering                     tracking          embeddings
+                                         |                  |
+                                         v                  v
+                                       events         anomaly scoring
+                                         |                  |
+                                         +---------+--------+
+                                                   |
+                                             EO/IR fusion
+                                                   |
+                                                   v
+                                              alert policy
+                                                   |
+                                                   v
+                                      CSV / video / API / UI
+```
+
+v0.2 implements the detector branch through normalized `Detection` objects. Tracking, anomaly
+scoring, fusion, and production alert policy remain future extraction stages.
+
+## Data contracts
+
+### `FrameRecord`
+
+`FrameRecord` is the **persisted ETL/provenance contract**. It contains identifiers, timestamps,
+image paths, dimensions, sensor metadata, and the source path. It is designed to be serialized into
+manifests and passed between batch-processing stages.
+
+### `FrameContext`
+
+`FrameContext` is the **runtime frame contract**. It carries:
+
+- frame number;
+- timestamp;
+- in-memory NumPy image;
+- optional source path;
+- sensor identifier;
+- modality.
+
+This split is intentional. A persisted manifest should not contain a live NumPy image, while a real
+object detector should not need to reopen a JPEG merely to access pixels that are already in memory.
+
+### `Detection`
+
+`Detection` is the framework-neutral object-observation contract. It contains:
+
+- frame number;
+- normalized XYXY integer coordinates;
+- class label;
+- confidence;
+- source adapter;
+- optional object/event metadata.
+
+A PyTorch tensor, Ultralytics `Results` object, OpenCV capture handle, pandas row, or provider-specific
+object must not leak past the adapter boundary.
+
+Future contracts will likely include `Track`, `Event`, `EmbeddingObservation`, `AnomalyScore`, and
+`Alert`.
+
+## Detector contract evolution
+
+The first v0.1 detector contract accepted only `frame_number` because the only backend was a
+GroundTruthDetector that could look rows up in a CSV. That interface was sufficient for the test
+double but insufficient for a learned model.
+
+v0.2 evolves the contract to:
+
+```python
+class Detector(Protocol):
+    name: str
+
+    def detect(self, frame: FrameContext) -> list[Detection]:
+        ...
+```
+
+This is a normal interface-evolution step. The important property is not that the first interface was
+perfect; it is that the interface was isolated enough to change without rewriting unrelated
+components.
+
+## Adapter implementations
+
+### Ground-truth test backend
+
+```text
+GT CSV + FrameContext.frame_number
             |
-            +-----------------------------+
-            |                             |
-            v                             v
-        tracking                     embeddings
-            |                             |
-            v                             v
-          events                    anomaly scoring
-            |                             |
-            +-------------+---------------+
-                          |
-                    EO/IR fusion
-                          |
-                          v
-                     alert policy
-                          |
-                          v
-               CSV / video / API / UI
+            v
+   GroundTruthDetector
+            |
+            v
+        Detection[]
 ```
 
-Only the upper part of this diagram is implemented in v0.1. Tracking, anomaly scoring, fusion, and
-production detector backends are the next extraction stages.
+The test backend deliberately ignores frame pixels. It remains useful because it gives integration
+tests a known-correct detector path without network downloads, Torch, CUDA, or model uncertainty.
 
-## Layers
-
-### 1. Data contracts
-
-`types.py` contains the canonical values exchanged between components. These types should be small,
-serializable, and independent of frameworks.
-
-Current examples:
-
-- `FrameRecord`: provenance and frame-level metadata.
-- `Detection`: normalized object-detection output using XYXY image coordinates.
-
-Future contracts will likely include `Track`, `EmbeddingObservation`, `AnomalyScore`, and `Alert`.
-
-A PyTorch tensor, Ultralytics result object, OpenCV capture handle, pandas row, or Roboflow-specific
-object should not cross a component boundary unless the boundary explicitly exists for that type.
-
-### 2. Adapters
-
-Adapters translate external systems into Pipeline Sentinel contracts.
-
-Current adapter:
+### YOLO learned backend
 
 ```text
-OpenCV video -> OpenCVVideoIngestAdapter -> FrameRecord manifest
+FrameContext.image
+        |
+        v
+Ultralytics model.predict(...)
+        |
+        v
+framework Results / Boxes / tensors
+        |
+        v
+     YoloDetector
+        |
+        v
+Pipeline Sentinel Detection[]
 ```
 
-Current detector test double:
+Only `YoloDetector` understands Ultralytics result objects. `PipelineSentinel` does not import
+Ultralytics or Torch.
+
+The adapter also owns runtime-specific cleanup such as:
+
+- tensor/array conversion;
+- class-ID to label conversion;
+- box clipping to image bounds;
+- confidence normalization;
+- model/runtime metadata.
+
+This is the practical meaning of putting a framework behind an adapter.
+
+## Optional dependencies
+
+The core package remains deliberately lightweight:
+
+```powershell
+uv sync --group dev
+```
+
+The YOLO runtime is installed only when requested:
+
+```powershell
+uv sync --extra yolo --group dev
+```
+
+This keeps ordinary ETL, manifest, synthetic-data, and reference-pipeline tests independent of a
+large ML runtime. Future ONNX or TensorRT backends can follow the same pattern rather than forcing
+every deployment target to install every framework.
+
+## Detection is not alerting
+
+This boundary is important:
 
 ```text
-Ground-truth CSV -> GroundTruthDetector -> Detection objects
+object detection != mission event != alert
 ```
 
-Planned detector adapter:
+A generic detector can say:
 
 ```text
-YOLO runtime -> YoloDetector -> Detection objects
+person at box X
+car at box Y
 ```
 
-The important property is that `PipelineSentinel` receives the same `Detection` objects in either
-case.
+It cannot, from that single observation alone, reliably say:
 
-### 3. Domain components
+```text
+loitering
+intrusion
+suspicious stop
+crossed protected corridor
+```
+
+Those require temporal association, geometry, policy, or other context.
+
+Therefore a YOLO `Detection` with no `scenario_role` is rendered and counted but does **not** become
+an alert. The GroundTruthDetector carries scenario roles only so the deterministic integration test
+can continue exercising alert artifact generation until the event/alert layers are extracted.
+
+Notebook 05 is the natural next place to build that boundary properly:
+
+```text
+Detection -> Track -> Event -> Alert policy
+```
+
+## Domain components
 
 Domain components operate on Pipeline Sentinel contracts rather than vendor objects. Tracking,
 anomaly scoring, sensor fusion, and alert policy belong here.
 
 For example, anomaly scoring should accept embeddings through an embedding contract; it should not
-know whether those vectors came from HOG, DINOv2, or another representation model.
+know whether vectors came from HOG, DINOv2, or another representation model.
 
-### 4. Orchestration
+## Orchestration
 
 `pipeline.py` is intentionally thin. Its job is to coordinate components, preserve ordering, collect
 artifacts, and surface errors. It should not contain model-specific preprocessing or training logic.
@@ -114,9 +238,9 @@ from ultralytics import YOLO
 
 that is a warning that framework-specific behavior has leaked out of an adapter.
 
-### 5. Interfaces
+## Application interfaces
 
-The CLI is the first application interface. A later REST API, Streamlit UI, desktop client, or edge
+The CLI is the first application interface. A later REST API, desktop client, Streamlit UI, or edge
 service should call the same package rather than reimplementing the pipeline.
 
 ```text
@@ -124,22 +248,6 @@ CLI --------+
 REST API ---+--> PipelineSentinel --> components
 UI ---------+
 ```
-
-## Why the ground-truth detector exists
-
-`GroundTruthDetector` is a **test double**, not an ML model. It gives the software stack a
-known-correct backend so we can test video I/O, data contracts, orchestration, alert generation, and
-artifact creation without conflating those failures with model-runtime, CUDA, or dependency
-failures.
-
-This gives us two separate questions:
-
-```text
-Does the application plumbing work?      -> GroundTruthDetector
-Does the learned detector work well?     -> YOLO / future adapters + benchmark data
-```
-
-That separation is extremely useful when debugging real systems.
 
 ## Repository boundaries
 
@@ -157,33 +265,26 @@ data/                    local data workspace; dataset bytes not committed
 
 The runtime package must never require a notebook to have been executed first.
 
-## Notebook relationship
+## Testing strategy for adapters
 
-The notebooks remain useful as the engineering lab book. They are the right place for plots,
-confusion matrices, exploratory model comparisons, pedagogical explanations, and temporary
-experiments.
-
-They are not the source of truth for reusable application behavior.
-
-The desired direction is:
+The YOLO adapter is unit-tested with an injected fake model object. This lets CI test the most
+important contract behavior without installing Ultralytics, downloading weights, or requiring a GPU:
 
 ```text
-old pattern
-notebook defines reusable function -> later notebook copies it
-
-new pattern
-package defines reusable function -> notebooks import and experiment with it
+fake framework result
+        |
+        v
+    YoloDetector
+        |
+        v
+normalized Detection objects
 ```
 
-Notebook execution order, Jupyter kernel state, `sys.path` surgery, plotting calls, and hard-coded
-project-root discovery must not be runtime requirements.
+A separate workstation/runtime test can then answer the different question:
 
-## Configuration rule
+> Does the actual optional model runtime install and execute on this machine?
 
-Runtime choices should progressively move from edited source code into explicit configuration.
-Notebook switches such as `RUN_YOLO = False` or `RUN_DINOV2 = False` are useful during exploration;
-a shipped application should express those choices through CLI/configuration while preserving safe
-defaults.
+Keeping those questions separate dramatically improves failure diagnosis.
 
 ## Evaluation layers
 
@@ -200,7 +301,7 @@ COCO subset
     -> Does a generic object detector behave sensibly on independent real imagery?
 
 UAVDT / aerial benchmark
-    -> Does performance survive the actual aerial/FMV domain shift?
+    -> Does performance survive aerial/FMV domain shift?
 
 mission-specific evaluation
     -> Does the system satisfy the operational requirement?
