@@ -42,6 +42,26 @@ def test_visdrone_dataset_discovers_sequences_and_split(tmp_path: Path) -> None:
     assert dataset.summary()["annotation_file_count"] == 1
 
 
+def test_visdrone_dataset_resolves_nested_archive_root(tmp_path: Path) -> None:
+    outer = tmp_path / "downloaded-val"
+    nested = _build_visdrone_fixture(outer)
+
+    dataset = VisDroneDataset(outer)
+
+    assert dataset.requested_root == outer.resolve()
+    assert dataset.root == nested.resolve()
+    assert dataset.split_name == "val"
+    assert dataset.sequence_ids() == ["uav_test_sequence"]
+
+
+def test_visdrone_dataset_accepts_sequences_directory(tmp_path: Path) -> None:
+    root = _build_visdrone_fixture(tmp_path)
+    dataset = VisDroneDataset(root / "sequences")
+
+    assert dataset.root == root.resolve()
+    assert dataset.sequence_ids() == ["uav_test_sequence"]
+
+
 def test_visdrone_annotations_are_normalized_to_xyxy(tmp_path: Path) -> None:
     sequence = VisDroneDataset(_build_visdrone_fixture(tmp_path)).first_sequence()
     ground_truth = sequence.normalized_ground_truth()
