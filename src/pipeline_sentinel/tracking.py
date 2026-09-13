@@ -11,6 +11,8 @@ class Tracker(Protocol):
 
     name: str
 
+    def reset(self) -> None: ...
+
     def update(self, frame: FrameContext, detections: list[Detection]) -> list[Track]: ...
 
 
@@ -71,6 +73,10 @@ class IoUTracker:
         self.max_missed_updates = int(max_missed_updates)
         self._next_track_id = 1
         self._active: dict[int, _TrackState] = {}
+
+    def reset(self) -> None:
+        self._next_track_id = 1
+        self._active.clear()
 
     def update(self, frame: FrameContext, detections: list[Detection]) -> list[Track]:
         candidates: list[tuple[float, int, int]] = []
