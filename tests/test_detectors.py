@@ -1,9 +1,19 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from pipeline_sentinel.detectors import GroundTruthDetector
+from pipeline_sentinel.types import FrameContext
+
+
+def _frame(frame_number: int) -> FrameContext:
+    return FrameContext(
+        frame_number=frame_number,
+        timestamp_s=frame_number / 10.0,
+        image=np.zeros((100, 100, 3), dtype=np.uint8),
+    )
 
 
 def test_ground_truth_detector_emits_normalized_detections(tmp_path: Path) -> None:
@@ -35,7 +45,7 @@ def test_ground_truth_detector_emits_normalized_detections(tmp_path: Path) -> No
     annotations.to_csv(path, index=False)
 
     detector = GroundTruthDetector(path)
-    detections = detector.detect(4)
+    detections = detector.detect(_frame(4))
 
     assert detector.name == "ground_truth"
     assert len(detections) == 1
@@ -47,7 +57,7 @@ def test_ground_truth_detector_emits_normalized_detections(tmp_path: Path) -> No
     assert detection.source == "ground_truth"
     assert detection.object_id == 7
     assert detection.scenario_role == "intrusion_vehicle"
-    assert detector.detect(99) == []
+    assert detector.detect(_frame(99)) == []
 
 
 def test_ground_truth_detector_rejects_bad_schema(tmp_path: Path) -> None:
