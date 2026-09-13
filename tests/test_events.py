@@ -1,6 +1,10 @@
 import numpy as np
 
-from pipeline_sentinel.events import DwellEventDetector, ScenarioRoleEventDetector, SeverityAlertPolicy
+from pipeline_sentinel.events import (
+    DwellEventDetector,
+    ScenarioRoleEventDetector,
+    SeverityAlertPolicy,
+)
 from pipeline_sentinel.types import FrameContext, Track
 
 
