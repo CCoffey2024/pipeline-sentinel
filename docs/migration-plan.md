@@ -1,8 +1,8 @@
 # Notebook-to-application migration plan
 
 Pipeline Sentinel began as a deliberate learning sequence. The notebooks proved concepts, exposed
-failure modes, and let us compare approaches interactively. The application should preserve that
-record while promoting only stable, reusable behavior into `src/pipeline_sentinel/`.
+failure modes, and let us compare approaches interactively. The application preserves that record
+while promoting only stable, reusable behavior into `src/pipeline_sentinel/`.
 
 ## Status map
 
@@ -11,8 +11,8 @@ record while promoting only stable, reusable behavior into `src/pipeline_sentine
 | 01 — ETL | ingest, frame contract, manifests, synthetic inputs | `types.py`, `ingest.py`, `manifest.py`, `synthetic.py` | **v0.1 extracted** |
 | 02 — Classical CV baseline | cheap proposals / classical baseline | future `proposals.py`, benchmark utilities | notebook-only |
 | 03 — HOG/SVM → MobileNet | crop classification and lightweight CNN comparison | future `classifiers.py` + classifier adapter | notebook-only |
-| 04 — Object detection | detector adapter and optional YOLO backend | `detectors.py` | **next extraction** |
-| 05 — Tracking and events | temporal association and event logic | future `tracking.py`, `events.py` | notebook-only |
+| 04 — Object detection | detector adapter and optional YOLO backend | `detectors.py`, `yolo.py`, CLI | **v0.2 extracted** |
+| 05 — Tracking and events | temporal association and event logic | future `tracking.py`, `events.py` | **next extraction** |
 | 06 — DINOv2 anomaly detection | representation learning and distance-based anomaly scoring | future `embeddings.py`, `anomaly.py` | notebook-only |
 | 07 — EO + IR fusion | modality alignment and fused evidence | future `fusion.py` | notebook-only |
 | 08 — Model bakeoff | comparative evaluation | `benchmarks/`, evaluation commands | scaffold only |
@@ -35,8 +35,6 @@ them.
 
 ## Migration workflow for each notebook
 
-For each notebook we will follow the same sequence:
-
 ```text
 1. Identify the durable idea
         |
@@ -56,7 +54,7 @@ For each notebook we will follow the same sequence:
 6. Integration-test it behind PipelineSentinel
         |
         v
-7. Update the notebook to import package code
+7. Update/preserve notebook documentation
         |
         v
 8. Keep plots/explanations in the notebook
@@ -67,11 +65,11 @@ The notebook is not deleted when extraction is complete. Its role changes from *
 
 ## Notebook 01 — completed first pass
 
-Notebook 01 already contained the strongest software boundary in the learning sequence: downstream
-code should consume a canonical frame contract rather than care whether data came from FMV,
-thermal video, still imagery, or another source.
+Notebook 01 supplied the first durable software boundary: downstream code should consume canonical
+frame/provenance contracts rather than care whether data came from FMV, thermal video, still imagery,
+or another source.
 
-The v0.1 package therefore promotes:
+The v0.1 package promoted:
 
 ```text
 FrameRecord
@@ -84,49 +82,118 @@ synthetic EO/IR generation
 The notebook remains useful for inspecting frames, viewing the protected corridor, and explaining
 why provenance matters.
 
-## Notebook 04 — next production extraction
+## Notebook 04 — completed first production extraction
 
-The next important step is to turn the detector lesson into a real adapter boundary.
+The detector lesson forced the first real interface evolution.
 
-Target shape:
+### What changed
+
+The v0.1 detector contract accepted only a frame number because the only implementation was the
+GroundTruthDetector. A learned detector needs pixels, so v0.2 introduced a separate runtime contract:
+
+```python
+class FrameContext:
+    frame_number: int
+    timestamp_s: float
+    image: np.ndarray
+    ...
+```
+
+The detector boundary is now:
 
 ```python
 class Detector(Protocol):
-    def detect(self, frame, frame_number, timestamp_s):
+    name: str
+
+    def detect(self, frame: FrameContext) -> list[Detection]:
         ...
-
-class GroundTruthDetector:
-    ...
-
-class YoloDetector:
-    ...
 ```
 
-Both backends return Pipeline Sentinel `Detection` objects. Ultralytics/YOLO result objects stay
-inside `YoloDetector`.
-
-Acceptance test:
+Two implementations satisfy the same interface:
 
 ```text
-swap GroundTruthDetector -> YoloDetector
-without modifying PipelineSentinel.run()
+GroundTruthDetector -> Detection[]
+YoloDetector        -> Detection[]
 ```
 
-If that swap requires edits throughout the application, the interface is too weak.
+Ultralytics `Results`, `Boxes`, and tensor objects are converted inside `YoloDetector` and do not
+cross into the rest of the application.
 
-## Notebook 05 — tracking and event logic
+### Optional dependency boundary
 
-Tracking should consume normalized detections and return normalized tracks. The tracker should not
-care whether detections came from YOLO, ground truth, ONNX, or a future backend.
+The core application remains installable without the learned runtime:
 
-Likely future contract:
+```powershell
+uv sync --group dev
+```
+
+YOLO is opt-in:
+
+```powershell
+uv sync --extra yolo --group dev
+```
+
+This prevents every deployment target from inheriting Torch/model-runtime dependencies merely
+because one adapter exists.
+
+### Test strategy
+
+The adapter tests inject a fake model object that returns model-like box/confidence/class outputs.
+This tests framework normalization and the `Detector -> Detection` contract without requiring model
+weights or a GPU in CI.
+
+The actual runtime can then be tested independently on a workstation through:
+
+```powershell
+uv run pipeline-sentinel run-yolo input.mp4
+```
+
+### Important domain separation discovered during extraction
+
+A learned detector emits object observations, not mission events.
 
 ```text
-Detection -> Tracker -> Track
-Track + time + region/policy -> Event
+Detection != Event != Alert
 ```
 
-Event logic should be separable from tracker internals so different trackers can be evaluated.
+YOLO can identify a `person` or `car`; it does not know from a single frame that the object is
+loitering, intruding, or violating a protected corridor. Generic learned detections are therefore
+rendered and counted but do not automatically become alerts.
+
+That discovery defines the next extraction boundary.
+
+## Notebook 05 — next production extraction
+
+Tracking and event logic should consume normalized detections and return normalized tracks/events.
+The tracker must not care whether detections came from YOLO, ground truth, ONNX, or another future
+backend.
+
+Target direction:
+
+```text
+FrameContext
+    |
+    v
+Detector -> Detection[]
+               |
+               v
+            Tracker
+               |
+               v
+             Track[]
+               |
+               v
+          Event detector
+               |
+               v
+             Event[]
+               |
+               v
+          Alert policy
+```
+
+Tracking and event logic should remain separate. A tracker answers **which observations belong to the
+same object over time**. Event logic answers **what that object's temporal/spatial behavior means**.
 
 ## Notebook 06 — embeddings and anomaly scoring
 
@@ -163,8 +230,8 @@ synthetic demo -> COCO subset -> UAVDT -> mission-specific held-out data
 
 ## Notebook 09 — end-to-end walkthrough
 
-Notebook 09 remains valuable as an explanatory walkthrough, but the application itself should be
-executable without Jupyter:
+Notebook 09 remains useful as an explanatory walkthrough, but the application itself executes
+without Jupyter:
 
 ```powershell
 uv run pipeline-sentinel demo
@@ -199,8 +266,9 @@ A notebook component is considered migrated when:
 - framework-specific objects do not leak across its boundary;
 - automated tests cover normal behavior and at least one failure mode;
 - it can be invoked outside Jupyter;
-- the notebook imports the package implementation instead of maintaining a divergent duplicate;
-- the end-to-end demo still passes.
+- preserved notebook material points toward the package implementation rather than becoming a
+  second source of truth;
+- the end-to-end reference demo still passes.
 
 This keeps the learning material while preventing the classic R&D failure mode where the notebook
-and the deployed implementation quietly become two different systems.
+and deployed implementation quietly become two different systems.
