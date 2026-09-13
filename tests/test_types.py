@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from pipeline_sentinel.types import Detection, FrameRecord
+import numpy as np
+import pytest
+
+from pipeline_sentinel.types import Detection, FrameContext, FrameRecord
 
 
 def test_core_contracts_round_trip() -> None:
@@ -15,6 +18,14 @@ def test_core_contracts_round_trip() -> None:
         modality="EO",
         source_path=Path("demo.mp4"),
     )
+    context = FrameContext(
+        frame_number=1,
+        timestamp_s=0.1,
+        image=np.zeros((360, 640, 3), dtype=np.uint8),
+        source_path=Path("demo.mp4"),
+        sensor_id="EO_CAM_01",
+        modality="EO",
+    )
     detection = Detection(
         frame_number=1,
         label="vehicle",
@@ -27,4 +38,11 @@ def test_core_contracts_round_trip() -> None:
     )
 
     assert frame.to_dict()["frame_id"] == "demo_000001"
+    assert context.width == 640
+    assert context.height == 360
     assert detection.xyxy == (10, 20, 40, 60)
+
+
+def test_frame_context_rejects_invalid_images() -> None:
+    with pytest.raises(ValueError, match="non-empty numpy array"):
+        FrameContext(frame_number=0, timestamp_s=0.0, image=np.array([]))
