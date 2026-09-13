@@ -8,6 +8,7 @@ from pathlib import Path
 from . import __version__
 from .demo import run_demo
 from .detectors import GroundTruthDetector
+from .evaluation import evaluate_visdrone_run
 from .ingest import OpenCVVideoIngestAdapter
 from .pipeline import PipelineSentinel, RunArtifacts
 from .visdrone import VisDroneDataset
@@ -120,6 +121,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Working cadence for timestamps and rendered MP4; VisDrone VID is stored as JPEG frames",
     )
     _add_yolo_arguments(vd_run)
+
+    vd_eval = sub.add_parser(
+        "evaluate-visdrone",
+        help="Evaluate one saved VisDrone run with the shared COCO/VisDrone ontology",
+    )
+    vd_eval.add_argument(
+        "run_dir",
+        type=Path,
+        help="Directory containing detections.csv, ground_truth.csv, and run_manifest.json",
+    )
+    vd_eval.add_argument(
+        "--iou-threshold",
+        type=float,
+        default=0.50,
+        help="IoU threshold used for fixed-threshold TP/FP/FN matching",
+    )
+    vd_eval.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Benchmark output directory; defaults to <run_dir>/benchmark",
+    )
     return parser
 
 
@@ -224,12 +247,43 @@ def main() -> int:
                 "ground_truth_rows": ground_truth_rows,
                 "frame_step": args.frame_step,
                 "max_frames": args.max_frames,
+                "detector_model": args.model,
+                "detector_confidence": args.confidence,
+                "detector_nms_iou": args.iou,
+                "detector_imgsz": args.imgsz,
+                "detector_device": args.device,
+                "detector_class_ids": args.class_ids,
                 "timing_note": (
                     "VisDrone VID is distributed as image sequences; --fps is a declared working "
                     "cadence for timestamps/rendering, not recovered acquisition timing."
                 ),
             },
         )
+    elif args.command == "evaluate-visdrone":
+        try:
+            result, benchmark_artifacts = evaluate_visdrone_run(
+                args.run_dir,
+                iou_threshold=args.iou_threshold,
+                output_dir=args.output,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+
+        overall = result.summary["overall"]
+        print(
+            "Shared-class benchmark: "
+            f"TP={overall['true_positive']} FP={overall['false_positive']} "
+            f"FN={overall['false_negative']} precision={overall['precision']} "
+            f"recall={overall['recall']} f1={overall['f1']}"
+        )
+        print(result.class_metrics.to_string(index=False))
+        print(f"Benchmark summary: {benchmark_artifacts.summary_json}")
+        print(f"Class metrics:     {benchmark_artifacts.class_metrics_csv}")
+        print(f"Matches:           {benchmark_artifacts.matches_csv}")
+        print(f"Excluded preds:    {benchmark_artifacts.excluded_predictions_csv}")
+        print(f"Excluded GT:       {benchmark_artifacts.excluded_ground_truth_csv}")
+        return 0
     else:
         raise RuntimeError(f"Unhandled command: {args.command}")
 
