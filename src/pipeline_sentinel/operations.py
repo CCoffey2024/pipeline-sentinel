@@ -4,7 +4,7 @@ import json
 import platform
 import sys
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -74,6 +74,37 @@ def _build_pipeline(config: ProductionConfig) -> PipelineSentinel:
     )
 
 
+def _add_operational_provenance(
+    artifacts: RunArtifacts,
+    *,
+    run_id: str,
+    started_at: str,
+    config_source: Path,
+    config_sha256: str,
+    effective_config_json: Path,
+    run_log_jsonl: Path,
+    run_status_json: Path,
+) -> None:
+    manifest = json.loads(artifacts.run_manifest.read_text(encoding="utf-8"))
+    metadata = dict(manifest.get("metadata") or {})
+    metadata.update(
+        {
+            "run_id": run_id,
+            "started_at_utc": started_at,
+            "config_source": str(config_source),
+            "config_sha256": config_sha256,
+            "effective_config_json": str(effective_config_json),
+            "run_log_jsonl": str(run_log_jsonl),
+            "run_status_json": str(run_status_json),
+            "python_version": platform.python_version(),
+            "python_executable": sys.executable,
+            "platform": platform.platform(),
+        }
+    )
+    manifest["metadata"] = metadata
+    artifacts.run_manifest.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
 def run_configured_video(
     video_path: Path,
     config_path: Path,
@@ -138,18 +169,16 @@ def run_configured_video(
             resolved_output,
             sensor_id=config.runtime.sensor_id,
             modality=config.runtime.modality,
-            run_metadata={
-                "run_id": run_id,
-                "started_at_utc": started_at,
-                "config_source": str(provenance.path),
-                "config_sha256": provenance.sha256,
-                "effective_config_json": str(effective_config_json),
-                "run_log_jsonl": str(run_log_jsonl),
-                "run_status_json": str(run_status_json),
-                "python_version": platform.python_version(),
-                "python_executable": sys.executable,
-                "platform": platform.platform(),
-            },
+        )
+        _add_operational_provenance(
+            artifacts,
+            run_id=run_id,
+            started_at=started_at,
+            config_source=provenance.path,
+            config_sha256=provenance.sha256,
+            effective_config_json=effective_config_json,
+            run_log_jsonl=run_log_jsonl,
+            run_status_json=run_status_json,
         )
     except Exception as exc:
         completed_at = utc_now()
