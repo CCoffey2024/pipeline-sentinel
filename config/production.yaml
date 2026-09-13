@@ -1,0 +1,31 @@
+detector:
+  backend: yolo
+  model: yolo26n.pt
+  confidence: 0.25
+  nms_iou: 0.70
+  # 960 is the current balanced operating point from the VisDrone validation run:
+  # materially higher recall than 640 without the larger precision penalty seen at 1280.
+  imgsz: 960
+  device: null
+  class_ids: null
+
+tracker:
+  backend: iou
+  iou_threshold: 0.30
+  max_missed_updates: 2
+
+events:
+  dwell:
+    # Disabled by default until a deployment has mission-specific dwell thresholds.
+    enabled: false
+    min_hits: 30
+    max_displacement_px: 40.0
+    labels:
+      - person
+
+alerts:
+  minimum_severity: warning
+
+runtime:
+  sensor_id: EO_CAM_01
+  modality: EO

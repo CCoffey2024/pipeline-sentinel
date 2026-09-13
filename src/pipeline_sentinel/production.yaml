@@ -1,0 +1,28 @@
+detector:
+  backend: yolo
+  model: yolo26n.pt
+  confidence: 0.25
+  nms_iou: 0.70
+  imgsz: 960
+  device: null
+  class_ids: null
+
+tracker:
+  backend: iou
+  iou_threshold: 0.30
+  max_missed_updates: 2
+
+events:
+  dwell:
+    enabled: false
+    min_hits: 30
+    max_displacement_px: 40.0
+    labels:
+      - person
+
+alerts:
+  minimum_severity: warning
+
+runtime:
+  sensor_id: EO_CAM_01
+  modality: EO

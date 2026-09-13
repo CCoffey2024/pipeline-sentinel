@@ -6,11 +6,13 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .config import ConfigError, load_production_config
 from .demo import run_demo
 from .detectors import GroundTruthDetector
 from .evaluation import evaluate_visdrone_run
 from .events import DwellEventDetector, ScenarioRoleEventDetector, SeverityAlertPolicy
 from .ingest import OpenCVVideoIngestAdapter
+from .operations import ProductionRunArtifacts, run_configured_video
 from .pipeline import PipelineSentinel, RunArtifacts
 from .tracking import IoUTracker
 from .visdrone import VisDroneDataset
@@ -102,6 +104,15 @@ def _print_artifacts(artifacts: RunArtifacts) -> None:
     print(f"Run manifest:    {artifacts.run_manifest}")
 
 
+def _print_production_artifacts(artifacts: ProductionRunArtifacts) -> None:
+    print(f"Run ID:           {artifacts.run_id}")
+    print(f"Output directory: {artifacts.output_dir}")
+    _print_artifacts(artifacts.pipeline)
+    print(f"Effective config: {artifacts.effective_config_json}")
+    print(f"Run log:          {artifacts.run_log_jsonl}")
+    print(f"Run status:       {artifacts.run_status_json}")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pipeline-sentinel",
@@ -109,6 +120,30 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    production = sub.add_parser(
+        "run",
+        help="Run the config-driven production video pipeline",
+    )
+    production.add_argument("video", type=Path)
+    production.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config/production.yaml"),
+        help="Validated YAML runtime profile",
+    )
+    production.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Exact run output directory; default is outputs/runs/<run-id>",
+    )
+
+    validate = sub.add_parser(
+        "validate-config",
+        help="Validate and print an effective production YAML configuration",
+    )
+    validate.add_argument("config", type=Path)
 
     demo = sub.add_parser("demo", help="Run deterministic synthetic end-to-end smoke test")
     demo.add_argument("--output", type=Path, default=Path("outputs/demo"))
@@ -204,6 +239,36 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _build_parser().parse_args()
 
+    if args.command == "run":
+        try:
+            production_artifacts = run_configured_video(
+                args.video,
+                args.config,
+                output_dir=args.output,
+            )
+        except (ConfigError, FileNotFoundError, YoloDependencyError, ValueError, RuntimeError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        _print_production_artifacts(production_artifacts)
+        return 0
+    if args.command == "validate-config":
+        try:
+            config, provenance = load_production_config(args.config)
+        except (ConfigError, FileNotFoundError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        print(
+            json.dumps(
+                {
+                    "valid": True,
+                    "config_source": str(provenance.path),
+                    "config_sha256": provenance.sha256,
+                    "effective_config": config.to_dict(),
+                },
+                indent=2,
+            )
+        )
+        return 0
     if args.command == "demo":
         artifacts = run_demo(
             args.output,
