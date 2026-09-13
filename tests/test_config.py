@@ -5,6 +5,17 @@ import pytest
 from pipeline_sentinel.config import ConfigError, load_production_config
 
 
+def test_bundled_production_config_is_valid() -> None:
+    config, provenance = load_production_config()
+
+    assert config.detector.backend == "yolo"
+    assert config.detector.imgsz == 960
+    assert config.tracker.backend == "iou"
+    assert config.events.dwell.enabled is False
+    assert provenance.path.name == "production.yaml"
+    assert len(provenance.sha256) == 64
+
+
 def test_load_production_config_and_hash(tmp_path: Path) -> None:
     config_path = tmp_path / "production.yaml"
     config_path.write_text(
