@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 yolo = [
-  "ultralytics>=8.4.147,<9",
+  "ultralytics-opencv-headless>=8.4.147,<9",
 ]
 
 [dependency-groups]
