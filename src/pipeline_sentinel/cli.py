@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -8,8 +9,43 @@ from . import __version__
 from .demo import run_demo
 from .detectors import GroundTruthDetector
 from .ingest import OpenCVVideoIngestAdapter
-from .pipeline import PipelineSentinel
+from .pipeline import PipelineSentinel, RunArtifacts
+from .visdrone import VisDroneDataset
 from .yolo import YoloDependencyError, YoloDetector
+
+
+def _add_yolo_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--model", default="yolo26n.pt")
+    parser.add_argument("--conf", dest="confidence", type=float, default=0.25)
+    parser.add_argument("--iou", type=float, default=0.70)
+    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--device", default=None, help="Inference device, e.g. cpu, cuda:0, or 0")
+    parser.add_argument(
+        "--class-id",
+        dest="class_ids",
+        action="append",
+        type=int,
+        default=None,
+        help="Restrict inference to a COCO class ID; repeat for multiple classes",
+    )
+
+
+def _make_yolo_detector(args: argparse.Namespace) -> YoloDetector:
+    return YoloDetector(
+        model_name=args.model,
+        confidence=args.confidence,
+        iou=args.iou,
+        imgsz=args.imgsz,
+        device=args.device,
+        class_ids=args.class_ids,
+    )
+
+
+def _print_artifacts(artifacts: RunArtifacts) -> None:
+    print(f"Annotated video: {artifacts.annotated_video}")
+    print(f"Detections:      {artifacts.detections_csv}")
+    print(f"Alerts:          {artifacts.alerts_csv}")
+    print(f"Run manifest:    {artifacts.run_manifest}")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -40,24 +76,50 @@ def _build_parser() -> argparse.ArgumentParser:
     ref.add_argument("ground_truth", type=Path)
     ref.add_argument("--output", type=Path, default=Path("outputs/reference"))
 
-    yolo = sub.add_parser("run-yolo", help="Run an optional Ultralytics YOLO detector backend")
+    yolo = sub.add_parser("run-yolo", help="Run YOLO on one encoded video")
     yolo.add_argument("video", type=Path)
     yolo.add_argument("--output", type=Path, default=Path("outputs/yolo"))
-    yolo.add_argument("--model", default="yolo26n.pt")
-    yolo.add_argument("--conf", dest="confidence", type=float, default=0.25)
-    yolo.add_argument("--iou", type=float, default=0.70)
-    yolo.add_argument("--imgsz", type=int, default=640)
-    yolo.add_argument("--device", default=None, help="Inference device, e.g. cpu, cuda:0, or 0")
-    yolo.add_argument(
-        "--class-id",
-        dest="class_ids",
-        action="append",
-        type=int,
-        default=None,
-        help="Restrict inference to a COCO class ID; repeat for multiple classes",
-    )
+    _add_yolo_arguments(yolo)
     yolo.add_argument("--sensor-id", default="EO_CAM_01")
     yolo.add_argument("--modality", choices=["EO", "IR", "OTHER"], default="EO")
+
+    vd_info = sub.add_parser(
+        "visdrone-info",
+        help="Validate a VisDrone2019-VID train/val root and list image sequences",
+    )
+    vd_info.add_argument("dataset_root", type=Path)
+    vd_info.add_argument("--limit", type=int, default=20)
+
+    vd_run = sub.add_parser(
+        "run-visdrone",
+        help="Run YOLO directly over a VisDrone2019-VID image sequence",
+    )
+    vd_run.add_argument("dataset_root", type=Path)
+    vd_run.add_argument(
+        "--sequence",
+        default=None,
+        help="VisDrone sequence ID; defaults to the first sequence in sorted order",
+    )
+    vd_run.add_argument("--output", type=Path, default=Path("outputs/visdrone"))
+    vd_run.add_argument(
+        "--max-frames",
+        type=int,
+        default=None,
+        help="Optional cap for a quick acceptance run; default processes the whole sequence",
+    )
+    vd_run.add_argument(
+        "--frame-step",
+        type=int,
+        default=1,
+        help="Process every Nth source frame",
+    )
+    vd_run.add_argument(
+        "--fps",
+        type=float,
+        default=30.0,
+        help="Working cadence for timestamps and rendered MP4; VisDrone VID is stored as JPEG frames",
+    )
+    _add_yolo_arguments(vd_run)
     return parser
 
 
@@ -88,14 +150,7 @@ def main() -> int:
         artifacts = pipeline.run_video(args.video, args.output)
     elif args.command == "run-yolo":
         try:
-            detector = YoloDetector(
-                model_name=args.model,
-                confidence=args.confidence,
-                iou=args.iou,
-                imgsz=args.imgsz,
-                device=args.device,
-                class_ids=args.class_ids,
-            )
+            detector = _make_yolo_detector(args)
         except YoloDependencyError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
@@ -107,12 +162,67 @@ def main() -> int:
             sensor_id=args.sensor_id,
             modality=args.modality,
         )
+    elif args.command == "visdrone-info":
+        dataset = VisDroneDataset(args.dataset_root)
+        summary = dataset.summary()
+        print(json.dumps(summary, indent=2))
+        limit = max(0, args.limit)
+        for sequence_id in dataset.sequence_ids()[:limit]:
+            sequence = dataset.sequence(sequence_id)
+            annotation_state = "annotations" if sequence.annotation_path else "no annotations"
+            print(f"{sequence_id}: {sequence.frame_count} frames, {annotation_state}")
+        return 0
+    elif args.command == "run-visdrone":
+        dataset = VisDroneDataset(args.dataset_root)
+        sequence = dataset.sequence(args.sequence) if args.sequence else dataset.first_sequence()
+        output_dir = Path(args.output).resolve() / dataset.split_name / sequence.sequence_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        ground_truth_path: Path | None = None
+        if sequence.annotation_path is not None:
+            ground_truth_path = output_dir / "ground_truth.csv"
+            sequence.normalized_ground_truth().to_csv(ground_truth_path, index=False)
+
+        try:
+            detector = _make_yolo_detector(args)
+        except YoloDependencyError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+
+        print(
+            f"VisDrone {dataset.split_name}: sequence={sequence.sequence_id}, "
+            f"frames={sequence.frame_count}, step={args.frame_step}, max={args.max_frames or 'all'}"
+        )
+        pipeline = PipelineSentinel(detector)
+        artifacts = pipeline.run_frames(
+            sequence.iter_frames(
+                frame_step=args.frame_step,
+                max_frames=args.max_frames,
+                render_fps=args.fps,
+            ),
+            output_dir,
+            render_fps=args.fps,
+            source_name=f"VisDrone2019-VID:{dataset.split_name}/{sequence.sequence_id}",
+            run_metadata={
+                "source_type": "visdrone_image_sequence",
+                "dataset": "VisDrone2019-VID",
+                "dataset_root": str(dataset.root),
+                "split": dataset.split_name,
+                "sequence_id": sequence.sequence_id,
+                "annotation_path": str(sequence.annotation_path) if sequence.annotation_path else None,
+                "ground_truth_csv": str(ground_truth_path) if ground_truth_path else None,
+                "frame_step": args.frame_step,
+                "max_frames": args.max_frames,
+                "timing_note": (
+                    "VisDrone VID is distributed as image sequences; --fps is a declared working "
+                    "cadence for timestamps/rendering, not recovered acquisition timing."
+                ),
+            },
+        )
     else:
         raise RuntimeError(f"Unhandled command: {args.command}")
 
-    print(f"Annotated video: {artifacts.annotated_video}")
-    print(f"Alerts:          {artifacts.alerts_csv}")
-    print(f"Run manifest:    {artifacts.run_manifest}")
+    _print_artifacts(artifacts)
     return 0
 
 
