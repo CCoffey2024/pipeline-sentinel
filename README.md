@@ -1,35 +1,32 @@
 # Pipeline Sentinel
 
-Pipeline Sentinel is a modular computer-vision prototype for turning video/sensor inputs into a
-stable frame data contract, detections, anomaly/event signals, and human-facing alerts.
+Pipeline Sentinel is a modular computer-vision prototype for turning video/sensor inputs into stable
+runtime contracts, detections, temporal/event evidence, and human-facing alerts.
 
-The project began as a sequence of learning notebooks. The application is now being extracted from
-those notebooks so model runtimes can be swapped without rewriting the pipeline.
+The project began as a sequence of learning notebooks. The application is being extracted from those
+notebooks so model runtimes can be swapped without rewriting the pipeline.
 
 > **Scope:** defensive sensing, detection, tracking, anomaly scoring, and human-facing alerts for a
 > fictional pipeline corridor. No automated engagement or weapons logic.
 
-## v0.1 milestone
+## v0.2 milestone — first learned detector adapter
 
-v0.1 establishes the software foundation before we move the learned models:
+v0.1 established the software foundation. v0.2 adds the first real model-runtime boundary:
 
-- installable `src/` package;
-- canonical `FrameRecord` and `Detection` contracts;
-- OpenCV video-ingest adapter;
-- manifest validation;
-- deterministic EO/IR synthetic data generator;
-- framework-neutral `Detector` protocol;
-- ground-truth reference detector for integration testing;
-- thin `PipelineSentinel` orchestrator;
-- command-line interface;
-- repeatable tests and GitHub CI;
-- preserved learning-notebook area;
-- external benchmark staging and deterministic COCO subset tooling.
+- `FrameRecord` remains the serializable ETL/manifest contract;
+- `FrameContext` carries in-memory pixels between runtime components;
+- the `Detector` protocol now consumes `FrameContext`;
+- `GroundTruthDetector` remains the deterministic software test double;
+- `YoloDetector` wraps Ultralytics behind the same `Detection` output contract;
+- Ultralytics/Torch remain optional rather than core dependencies;
+- `pipeline-sentinel run-yolo` exposes the learned backend through the CLI;
+- framework-free fake-model tests validate YOLO result normalization without downloading weights;
+- detections and mission alerts are explicitly separated.
 
-The ground-truth detector is deliberately a **test backend**, not a model. It lets us establish that
-the software plumbing works before adding YOLO, MobileNet, DINOv2, tracking, and fusion.
+The central design rule is still that `PipelineSentinel` consumes Pipeline Sentinel contracts, not
+Ultralytics, Torch, or another vendor's result objects.
 
-## Quick start (Windows / PowerShell)
+## Quick start — core application
 
 ```powershell
 git clone https://github.com/CCoffey2024/pipeline-sentinel.git
@@ -41,7 +38,8 @@ uv run pytest
 uv run pipeline-sentinel demo --output outputs\demo
 ```
 
-The demo produces an annotated video, alerts CSV, and run manifest under the selected output root.
+The deterministic demo produces an annotated video, alerts CSV, and run manifest under the selected
+output root.
 
 Run the package against an arbitrary video for ETL only:
 
@@ -53,6 +51,48 @@ uv run pipeline-sentinel extract input.mp4 `
   --modality EO `
   --sample-every 2
 ```
+
+## Optional YOLO backend
+
+The learned detector is deliberately an optional install:
+
+```powershell
+uv sync --extra yolo --group dev
+```
+
+Then run YOLO through the same application pipeline:
+
+```powershell
+uv run pipeline-sentinel run-yolo .\input.mp4 `
+  --output outputs\yolo `
+  --model yolo26n.pt `
+  --conf 0.25 `
+  --device cpu
+```
+
+Use `--class-id` repeatedly to restrict inference to selected class IDs, for example:
+
+```powershell
+uv run pipeline-sentinel run-yolo .\input.mp4 `
+  --class-id 0 `
+  --class-id 2 `
+  --class-id 5 `
+  --class-id 7
+```
+
+When a named pretrained weight file is not already present locally, the model runtime may obtain it
+on first use. Model weights (`*.pt`, `*.onnx`, TensorRT engines, etc.) are intentionally excluded from
+Git.
+
+### Detection is not alerting
+
+The YOLO adapter emits normalized object observations such as `person`, `car`, or `truck`. Those
+objects are drawn on the annotated video and counted in the run manifest, but they are **not**
+automatically written as alerts. Mission semantics such as intrusion, loitering, or other temporal
+behavior belong to the tracking/event/alert stages that follow detection.
+
+The deterministic `GroundTruthDetector` carries `scenario_role` only so the software integration
+path can continue to test known alert behavior.
 
 ## Repository map
 
@@ -73,36 +113,39 @@ pipeline-sentinel/
 ## Architecture
 
 ```text
-Input source
-    |
-    v
-Ingest adapter
-    |
-    v
-FrameRecord contract
-    |
-    v
-Detector adapter ----> Detection contract
-    |                         |
-    |                  future tracker
-    |                  future embedder/anomaly
-    |                  future EO/IR fusion
-    v                         |
-          Pipeline orchestration
-                    |
-                    v
-          alerts / video / manifest
+video / stream
+      |
+      v
+ FrameContext
+      |
+      v
+ Detector contract
+      |
+      +---------- GroundTruthDetector   (test double)
+      |
+      +---------- YoloDetector          (optional learned backend)
+      |
+      v
+ Detection contract
+      |
+      +---------- rendering / run metrics
+      |
+      +---------- future tracking -> events -> alert policy
+      |
+      +---------- future embeddings -> anomaly scoring
+      |
+      +---------- future EO/IR fusion
 ```
 
-The important rule is that `pipeline.py` does **not** import YOLO, Torch, TensorRT, or another model
-framework. A model runtime lives behind an adapter that returns the same `Detection` contract.
+`pipeline.py` does not import Ultralytics or Torch. The framework-specific runtime stays inside the
+YOLO adapter and is translated immediately into Pipeline Sentinel `Detection` objects.
 
 Read more:
 
 - `docs/architecture.md` — component boundaries and design rules.
+- `docs/yolo-adapter.md` — first learned-runtime extraction and adapter mechanics.
 - `docs/migration-plan.md` — Notebook 01–09 extraction map.
 - `docs/testing.md` — local acceptance and CI strategy.
-- `docs/foundation-validation-2026-09-13.md` — current validation record.
 
 ## Notebooks
 
@@ -130,34 +173,29 @@ synthetic integration test -> COCO generic benchmark -> UAVDT aerial/FMV benchma
 
 See `benchmarks/README.md` and `benchmarks/coco/README.md`.
 
-## Current foundation validation
+## External runtime licensing
 
-The repository-foundation work has been exercised in the available build environment with Python
-bytecode compilation, **12 automated tests**, and the deterministic 120-frame end-to-end demo.
-That validates the reference application plumbing; it does not claim validation of optional learned
-backends or Windows dependency installation.
-
-The intended workstation acceptance sequence remains:
-
-```text
-uv sync --group dev
--> ruff check
--> pytest
--> pipeline-sentinel demo
-```
+Pipeline Sentinel does not vendor Ultralytics source code or pretrained weights. The optional YOLO
+extra installs an external runtime package. Review the upstream runtime/model licensing terms before
+using that backend in a commercial or otherwise distributed product.
 
 ## Next extraction milestones
 
-1. Notebook 04 -> real detector adapter (YOLO first, framework-neutral output).
-2. Notebook 05 -> tracker and event contracts.
-3. Notebook 06 -> HOG/DINOv2 embedder adapters + anomaly scorer.
-4. Notebook 07 -> EO/IR fusion component.
-5. Notebook 03 -> classifier component where it adds value after proposal generation.
-6. Notebook 08 -> repeatable benchmark command, including COCO/UAVDT.
-7. Notebook 09 -> retire notebook-only orchestration in favor of the CLI/package.
+1. Notebook 05 -> tracker and event contracts.
+2. Notebook 06 -> HOG/DINOv2 embedder adapters + anomaly scorer.
+3. Notebook 07 -> EO/IR fusion component.
+4. Notebook 03 -> classifier component where it adds value after proposal generation.
+5. Notebook 08 -> repeatable benchmark command, including COCO/UAVDT.
+6. Notebook 09 -> retire notebook-only orchestration in favor of the CLI/package.
 
-The target is a fresh-clone contract:
+The software acceptance contract remains:
 
 ```text
-git clone -> uv sync -> uv run pytest -> uv run pipeline-sentinel demo
+git clone -> uv sync -> uv run ruff check . -> uv run pytest -> uv run pipeline-sentinel demo
+```
+
+The optional learned-detector acceptance path adds:
+
+```text
+uv sync --extra yolo --group dev -> pipeline-sentinel run-yolo <video>
 ```
