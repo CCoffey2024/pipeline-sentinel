@@ -20,12 +20,12 @@ The application must never depend on a notebook having been executed first.
 
 | Notebook | Topic | Repository status |
 |---|---|---|
-| 01 | ETL, frame contracts, OpenCV ingest, manifests | preserved here |
+| 01 | ETL, frame contracts, OpenCV ingest, manifests | historical learning snapshot preserved here |
 | 02 | Classical CV baseline | remains in the local learning workspace; add when reconciled |
-| 03 | HOG/SVM → MobileNet lightweight classification | repaired version preserved here |
+| 03 | HOG/SVM → MobileNet lightweight classification | repaired code path preserved as a repository-cleaned snapshot |
 | 04 | Object detection / detector adapter / optional YOLO | remains in the local learning workspace; next extraction target |
 | 05 | Tracking and events | remains in the local learning workspace |
-| 06 | DINOv2 representations and anomaly scoring | fixed version preserved here |
+| 06 | DINOv2 representations and anomaly scoring | fixed historical snapshot preserved here |
 | 07 | EO + IR sensor fusion | remains in the local learning workspace |
 | 08 | Model bakeoff | remains in the local learning workspace |
 | 09 | End-to-end demo | remains in the local learning workspace; orchestration is moving to the CLI |
@@ -36,42 +36,41 @@ more complete than it is.
 
 ## Preserved versions
 
-The preserved Notebook 03 is the restart-safe repaired version that includes the MobileNet output
-inspection step. Notebook 06 is the repaired DINOv2 anomaly-detection lesson. Notebook 01 is the
-ETL lesson from which the initial application contracts were extracted.
+Notebook 01 is the ETL lesson from which the initial application contracts were extracted.
+
+Notebook 03 preserves the repaired restart-safe HOG/SVM and MobileNet code path, including raw
+ImageNet prediction inspection and the frozen-feature linear probe. Its repository copy trims some
+redundant teaching/plot cells so the durable learning path is easier to review in source control.
+
+Notebook 06 is the repaired DINOv2 anomaly-detection lesson with the HOG control experiment and
+optional DINOv2 backend.
+
+These are **learning snapshots**, not yet the canonical runtime implementation. Some historical
+imports still reflect the pre-package folder layout. As each lesson is migrated, the notebook should
+be reconciled to import `pipeline_sentinel` package components instead of preserving duplicate
+runtime logic.
 
 ## Rules for future notebooks
 
-A learning notebook may:
+A learning notebook may contain plots, teaching prose, experimental parameters, sanity-check
+displays, and model comparisons. It should increasingly import production components from
+`pipeline_sentinel`.
 
-- contain plots, teaching prose, experimental parameters, and sanity-check displays;
-- compare alternative models or methods;
-- use small convenience cells for exploration;
-- import production components from `pipeline_sentinel`.
-
-A learning notebook should not become the only location of:
-
-- a stable data contract;
-- runtime orchestration;
-- framework adapters used by the application;
-- reusable validation logic;
-- deployment configuration.
+A learning notebook should not become the only location of a stable data contract, runtime
+orchestration, framework adapter, reusable validator, or deployment configuration.
 
 Once a notebook component is promoted into the package, the notebook should import it rather than
 maintain a second copy indefinitely.
 
-## Running notebooks
+## Notebook environment
 
-From the repository root:
+Jupyter is intentionally **not** a core application dependency in v0.1. The production CLI should
+not install a notebook server just to run Pipeline Sentinel.
 
-```powershell
-uv sync --group dev
-uv run jupyter lab
-```
-
-Jupyter is not currently a core runtime dependency. If you want the repo itself to manage the
-notebook environment, we can add a separate optional `notebooks` dependency group later rather than
-forcing Jupyter onto application users.
+For now, use the existing learning environment for these snapshots. When we resume active notebook
+work inside this repository, the clean next step is a separate optional `notebooks` dependency group
+containing Jupyter, matplotlib, scikit-learn, scikit-image, Torch/torchvision, and other teaching
+requirements.
 
 ## Data policy
 
