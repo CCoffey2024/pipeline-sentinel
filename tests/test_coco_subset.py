@@ -62,7 +62,4 @@ def test_coco_subset_filters_categories_and_is_deterministic(tmp_path: Path) -> 
     assert {category["name"] for category in first["categories"]} == {"person", "car"}
     assert all(annotation["category_id"] in {1, 2} for annotation in first["annotations"])
     assert first_manifest["selected_images"] == 2
-    assert first_manifest == second_manifest | {
-        "source_annotations": first_manifest["source_annotations"],
-        "source_images": first_manifest["source_images"],
-    }
+    assert first_manifest == second_manifest
