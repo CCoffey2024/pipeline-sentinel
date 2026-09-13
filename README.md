@@ -10,13 +10,15 @@ replaced without rewriting the rest of the system.
 > **Scope:** defensive sensing, detection, tracking, anomaly scoring, sensor fusion, and human-facing
 > alerts for a fictional pipeline corridor. No automated engagement or weapons logic.
 
-## v0.5 milestone — detections become temporal evidence
+## v0.6 milestone — config-driven, auditable production runs
 
 v0.1 established ingest and data contracts. v0.2 added the optional YOLO detector adapter. v0.3 made
-VisDrone image sequences a repeatable aerial source. v0.4 added detector-quality evaluation. **v0.5
-moves the runtime itself forward** with explicit tracking, event generation, and alert policy.
+VisDrone image sequences a repeatable aerial source. v0.4 added detector-quality evaluation. v0.5
+added tracking, events, and alert policy. **v0.6 turns that runtime into a production-style execution
+path** with validated configuration, run IDs, structured lifecycle logging, config snapshots, and
+failure status artifacts.
 
-The application flow is now:
+The application flow remains:
 
 ```text
 FrameContext
@@ -39,12 +41,56 @@ detection != track != event != alert
 A model saying “person here” is not the same thing as establishing that the same person persists over
 time, inferring a temporal condition, or deciding that a human operator should be notified.
 
-## Quick start
+## First production-style run
+
+Install the optional learned runtime, validate the checked-in production profile, then run one video:
 
 ```powershell
 git clone https://github.com/CCoffey2024/pipeline-sentinel.git
 cd pipeline-sentinel
 
+uv sync --extra yolo --group dev
+
+uv run pipeline-sentinel validate-config .\config\production.yaml
+
+uv run pipeline-sentinel run .\input.mp4 `
+  --config .\config\production.yaml
+```
+
+If `--output` is omitted, the application creates a unique directory under:
+
+```text
+outputs/runs/<UTC-timestamp>-<short-id>/
+```
+
+A completed run contains:
+
+```text
+annotated_video.mp4
+detections.csv
+tracks.csv
+events.csv
+alerts.csv
+run_manifest.json
+effective_config.json
+run_log.jsonl
+run_status.json
+```
+
+`effective_config.json` records the validated configuration actually used plus the SHA-256 of the
+source YAML. `run_log.jsonl` records lifecycle events. `run_status.json` is written before inference
+and ends as either `completed` or `failed`, so a failed run still leaves operational evidence.
+
+The current `config/production.yaml` uses 960-pixel YOLO inference because the controlled VisDrone
+comparison showed a large recall improvement over 640 without the larger precision penalty observed
+at 1280. Dwell events remain disabled by default because deployment-specific behavior thresholds
+should not be silently treated as universal policy.
+
+See `docs/production-run.md` for the runtime contract and provenance details.
+
+## Deterministic development acceptance
+
+```powershell
 uv sync --group dev
 uv run ruff check .
 uv run pytest
@@ -115,7 +161,7 @@ See `docs/architecture.md` for the component contracts and design rules.
 
 ## Baseline tracker
 
-v0.5 ships a deterministic `IoUTracker`:
+Pipeline Sentinel ships a deterministic `IoUTracker`:
 
 - same-class one-to-one association;
 - configurable IoU threshold;
@@ -140,15 +186,10 @@ Two event detectors currently exist:
 The dwell rule is useful software plumbing and a simple behavior baseline; it is **not** presented as
 mission-grade loitering analytics.
 
-## Optional YOLO backend
+## Lower-level YOLO development command
 
-Install the learned runtime separately:
-
-```powershell
-uv sync --extra yolo --group dev
-```
-
-Run YOLO on an encoded video:
+The config-driven `run` command is the application-facing entry point. `run-yolo` remains available
+for development experiments where explicit flags are useful:
 
 ```powershell
 uv run pipeline-sentinel run-yolo .\input.mp4 `
@@ -260,9 +301,9 @@ benchmark evaluator
     -> how good are the model predictions?
 ```
 
-CI does not download model weights or benchmark datasets. It tests source adapters, detector
-normalization, tracking, event generation, policy behavior, and orchestration with deterministic
-fixtures.
+CI does not download model weights or benchmark datasets. It tests configuration validation, source
+adapters, detector normalization, tracking, event generation, policy behavior, production lifecycle
+artifacts, and orchestration with deterministic fixtures.
 
 See `docs/testing.md`.
 
@@ -272,9 +313,9 @@ See `docs/testing.md`.
 pipeline-sentinel/
 ├── .github/workflows/       CI
 ├── benchmarks/              evaluation definitions and documentation
-├── config/                  version-controlled defaults
+├── config/                  version-controlled defaults and production profile
 ├── data/                    local staging; large data ignored
-├── docs/                    architecture, migration, testing, validation notes
+├── docs/                    architecture, migration, testing, operational notes
 ├── notebooks/learning/      preserved R&D / instructional work
 ├── outputs/                 generated artifacts; ignored
 ├── scripts/                 developer / preparation utilities
@@ -285,6 +326,7 @@ pipeline-sentinel/
 Useful documentation:
 
 - `docs/architecture.md` — runtime boundaries and contracts.
+- `docs/production-run.md` — config-driven execution, logging, and provenance.
 - `docs/migration-plan.md` — notebook-to-application extraction map.
 - `docs/testing.md` — CI and workstation acceptance.
 - `docs/yolo-adapter.md` — learned detector adapter mechanics.
@@ -300,9 +342,9 @@ The next application-oriented milestones are:
 
 1. extract the Notebook 06 embedder/anomaly-scoring boundary where it adds runtime value;
 2. add EO/IR evidence fusion behind stable contracts;
-3. move configuration from documented defaults into a first-class runtime configuration loader;
-4. add structured logging and stronger run provenance;
-5. package a service/API or operator UI only after the CLI/runtime contracts are stable.
+3. build wheel/sdist release artifacts and a versioned release workflow;
+4. add a service/API or operator UI only after the CLI/runtime contracts remain stable through those
+   additions.
 
 ## External runtime licensing
 
