@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pipeline-sentinel"
+version = "0.1.0"
+description = "A modular computer-vision pipeline prototype for ingest, detection, anomaly scoring, and human-facing alerts."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Chris Coffey" }
+]
+dependencies = [
+  "numpy>=2.0",
+  "opencv-python-headless>=4.10",
+  "pandas>=2.2",
+  "PyYAML>=6.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.8",
+]
+
+[project.scripts]
+pipeline-sentinel = "pipeline_sentinel.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pipeline_sentinel"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
