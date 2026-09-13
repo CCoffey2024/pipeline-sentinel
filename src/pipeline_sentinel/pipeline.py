@@ -12,9 +12,10 @@ import pandas as pd
 
 from . import __version__
 from .detectors import Detector
-from .types import FrameContext, Modality
+from .events import AlertPolicy, EventDetector, SeverityAlertPolicy
+from .tracking import IoUTracker, Tracker
+from .types import Alert, Detection, Event, FrameContext, Modality, Track
 
-NORMAL_ROLES = {"normal_maintenance"}
 DETECTION_COLUMNS = [
     "frame_number",
     "timestamp_s",
@@ -31,22 +32,157 @@ DETECTION_COLUMNS = [
     "x2",
     "y2",
 ]
-ALERT_COLUMNS = DETECTION_COLUMNS.copy()
+TRACK_COLUMNS = [
+    "frame_number",
+    "timestamp_s",
+    "track_id",
+    "label",
+    "confidence",
+    "hits",
+    "duration_s",
+    "first_frame_number",
+    "first_timestamp_s",
+    "scenario_role",
+    "tracker",
+    "sensor_id",
+    "modality",
+    "source_path",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
+]
+EVENT_COLUMNS = [
+    "event_id",
+    "frame_number",
+    "timestamp_s",
+    "event_type",
+    "severity",
+    "track_id",
+    "label",
+    "confidence",
+    "source",
+    "message",
+    "metadata",
+]
+ALERT_COLUMNS = [
+    "alert_id",
+    "event_id",
+    "frame_number",
+    "timestamp_s",
+    "alert_type",
+    "severity",
+    "track_id",
+    "label",
+    "confidence",
+    "source",
+    "message",
+    "metadata",
+]
 
 
 @dataclass(frozen=True, slots=True)
 class RunArtifacts:
     annotated_video: Path
     detections_csv: Path
+    tracks_csv: Path
+    events_csv: Path
     alerts_csv: Path
     run_manifest: Path
 
 
-class PipelineSentinel:
-    """Thin orchestration layer around interchangeable pipeline components."""
+def _detection_row(detection: Detection, frame: FrameContext) -> dict[str, object]:
+    x1, y1, x2, y2 = detection.xyxy
+    return {
+        "frame_number": detection.frame_number,
+        "timestamp_s": frame.timestamp_s,
+        "label": detection.label,
+        "object_id": detection.object_id,
+        "scenario_role": detection.scenario_role,
+        "confidence": detection.confidence,
+        "detector": detection.source,
+        "sensor_id": frame.sensor_id,
+        "modality": frame.modality,
+        "source_path": str(frame.source_path) if frame.source_path else None,
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
+    }
 
-    def __init__(self, detector: Detector) -> None:
+
+def _track_row(track: Track, frame: FrameContext) -> dict[str, object]:
+    x1, y1, x2, y2 = track.xyxy
+    return {
+        "frame_number": track.frame_number,
+        "timestamp_s": track.timestamp_s,
+        "track_id": track.track_id,
+        "label": track.label,
+        "confidence": track.confidence,
+        "hits": track.hits,
+        "duration_s": track.duration_s,
+        "first_frame_number": track.first_frame_number,
+        "first_timestamp_s": track.first_timestamp_s,
+        "scenario_role": track.scenario_role,
+        "tracker": track.source,
+        "sensor_id": frame.sensor_id,
+        "modality": frame.modality,
+        "source_path": str(frame.source_path) if frame.source_path else None,
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
+    }
+
+
+def _event_row(event: Event) -> dict[str, object]:
+    return {
+        "event_id": event.event_id,
+        "frame_number": event.frame_number,
+        "timestamp_s": event.timestamp_s,
+        "event_type": event.event_type,
+        "severity": event.severity,
+        "track_id": event.track_id,
+        "label": event.label,
+        "confidence": event.confidence,
+        "source": event.source,
+        "message": event.message,
+        "metadata": json.dumps(event.metadata, sort_keys=True),
+    }
+
+
+def _alert_row(alert: Alert) -> dict[str, object]:
+    return {
+        "alert_id": alert.alert_id,
+        "event_id": alert.event_id,
+        "frame_number": alert.frame_number,
+        "timestamp_s": alert.timestamp_s,
+        "alert_type": alert.alert_type,
+        "severity": alert.severity,
+        "track_id": alert.track_id,
+        "label": alert.label,
+        "confidence": alert.confidence,
+        "source": alert.source,
+        "message": alert.message,
+        "metadata": json.dumps(alert.metadata, sort_keys=True),
+    }
+
+
+class PipelineSentinel:
+    """Orchestrate framework-neutral detector, tracker, event, and alert components."""
+
+    def __init__(
+        self,
+        detector: Detector,
+        *,
+        tracker: Tracker | None = None,
+        event_detector: EventDetector | None = None,
+        alert_policy: AlertPolicy | None = None,
+    ) -> None:
         self.detector = detector
+        self.tracker = tracker or IoUTracker()
+        self.event_detector = event_detector
+        self.alert_policy = alert_policy or SeverityAlertPolicy()
 
     def run_frames(
         self,
@@ -57,12 +193,7 @@ class PipelineSentinel:
         source_name: str | None = None,
         run_metadata: Mapping[str, Any] | None = None,
     ) -> RunArtifacts:
-        """Run the pipeline over any ordered stream of ``FrameContext`` objects.
-
-        This is the common runtime used by both encoded videos and image-sequence datasets such as
-        VisDrone. ``render_fps`` controls only the generated annotated MP4; it does not claim to be
-        original acquisition timing unless the source provides that timing.
-        """
+        """Run the pipeline over any ordered stream of ``FrameContext`` objects."""
 
         if render_fps <= 0:
             raise ValueError("render_fps must be positive")
@@ -74,6 +205,10 @@ class PipelineSentinel:
         first = next(iterator, None)
         if first is None:
             raise ValueError("frame source yielded zero frames")
+
+        self.tracker.reset()
+        if self.event_detector is not None:
+            self.event_detector.reset()
 
         width, height = first.width, first.height
         annotated_video = output_dir / "annotated_video.mp4"
@@ -87,7 +222,10 @@ class PipelineSentinel:
             raise RuntimeError(f"Could not open video writer: {annotated_video}")
 
         detection_rows: list[dict[str, object]] = []
+        track_rows: list[dict[str, object]] = []
+        event_rows: list[dict[str, object]] = []
         alert_rows: list[dict[str, object]] = []
+        unique_track_ids: set[int] = set()
         frames_processed = 0
         first_frame_number = first.frame_number
         last_frame_number = first.frame_number
@@ -100,17 +238,43 @@ class PipelineSentinel:
                         f"expected {width}x{height}, got {frame.width}x{frame.height}"
                     )
 
-                rendered = frame.image.copy()
-                for detection in self.detector.detect(frame):
-                    role = detection.scenario_role
-                    is_alert = bool(role) and role not in NORMAL_ROLES
-                    x1, y1, x2, y2 = detection.xyxy
-                    box_value = (255, 255, 255) if is_alert else (180, 180, 180)
-                    cv2.rectangle(rendered, (x1, y1), (x2, y2), box_value, 3 if is_alert else 2)
+                detections = list(self.detector.detect(frame))
+                detection_rows.extend(_detection_row(detection, frame) for detection in detections)
 
-                    text = f"{detection.label} {detection.confidence:.2f}"
-                    if role:
-                        text = f"{text} {role}"
+                tracks = self.tracker.update(frame, detections)
+                track_rows.extend(_track_row(track, frame) for track in tracks)
+                unique_track_ids.update(track.track_id for track in tracks)
+
+                events = (
+                    self.event_detector.update(frame, tracks)
+                    if self.event_detector is not None
+                    else []
+                )
+                event_rows.extend(_event_row(event) for event in events)
+
+                frame_alerts: list[Alert] = []
+                for event in events:
+                    alert = self.alert_policy.evaluate(event)
+                    if alert is not None:
+                        frame_alerts.append(alert)
+                        alert_rows.append(_alert_row(alert))
+                alert_track_ids = {
+                    alert.track_id for alert in frame_alerts if alert.track_id is not None
+                }
+
+                rendered = frame.image.copy()
+                for track in tracks:
+                    x1, y1, x2, y2 = track.xyxy
+                    is_alert = track.track_id in alert_track_ids
+                    box_value = (255, 255, 255) if is_alert else (180, 180, 180)
+                    cv2.rectangle(
+                        rendered,
+                        (x1, y1),
+                        (x2, y2),
+                        box_value,
+                        3 if is_alert else 2,
+                    )
+                    text = f"#{track.track_id} {track.label} {track.confidence:.2f}"
                     cv2.putText(
                         rendered,
                         text,
@@ -122,26 +286,6 @@ class PipelineSentinel:
                         cv2.LINE_AA,
                     )
 
-                    row = {
-                        "frame_number": detection.frame_number,
-                        "timestamp_s": frame.timestamp_s,
-                        "label": detection.label,
-                        "object_id": detection.object_id,
-                        "scenario_role": role,
-                        "confidence": detection.confidence,
-                        "detector": detection.source,
-                        "sensor_id": frame.sensor_id,
-                        "modality": frame.modality,
-                        "source_path": str(frame.source_path) if frame.source_path else None,
-                        "x1": x1,
-                        "y1": y1,
-                        "x2": x2,
-                        "y2": y2,
-                    }
-                    detection_rows.append(row)
-                    if is_alert:
-                        alert_rows.append(row.copy())
-
                 writer.write(rendered)
                 frames_processed += 1
                 last_frame_number = frame.frame_number
@@ -150,6 +294,12 @@ class PipelineSentinel:
 
         detections_csv = output_dir / "detections.csv"
         pd.DataFrame(detection_rows, columns=DETECTION_COLUMNS).to_csv(detections_csv, index=False)
+
+        tracks_csv = output_dir / "tracks.csv"
+        pd.DataFrame(track_rows, columns=TRACK_COLUMNS).to_csv(tracks_csv, index=False)
+
+        events_csv = output_dir / "events.csv"
+        pd.DataFrame(event_rows, columns=EVENT_COLUMNS).to_csv(events_csv, index=False)
 
         alerts_csv = output_dir / "alerts.csv"
         pd.DataFrame(alert_rows, columns=ALERT_COLUMNS).to_csv(alerts_csv, index=False)
@@ -165,16 +315,24 @@ class PipelineSentinel:
                     "sensor_id": first.sensor_id,
                     "modality": first.modality,
                     "detector_backend": self.detector.name,
+                    "tracker_backend": self.tracker.name,
+                    "event_detector": self.event_detector.name if self.event_detector else None,
+                    "alert_policy": self.alert_policy.name,
                     "frames_processed": frames_processed,
                     "first_frame_number": first_frame_number,
                     "last_frame_number": last_frame_number,
                     "detections_emitted": len(detection_rows),
+                    "track_observations_emitted": len(track_rows),
+                    "unique_tracks": len(unique_track_ids),
+                    "events_emitted": len(event_rows),
                     "alerts_emitted": len(alert_rows),
                     "render_fps": float(render_fps),
                     "metadata": metadata,
                     "artifacts": {
                         "annotated_video": str(annotated_video),
                         "detections_csv": str(detections_csv),
+                        "tracks_csv": str(tracks_csv),
+                        "events_csv": str(events_csv),
                         "alerts_csv": str(alerts_csv),
                     },
                 },
@@ -183,7 +341,14 @@ class PipelineSentinel:
             encoding="utf-8",
         )
 
-        return RunArtifacts(annotated_video, detections_csv, alerts_csv, run_manifest)
+        return RunArtifacts(
+            annotated_video=annotated_video,
+            detections_csv=detections_csv,
+            tracks_csv=tracks_csv,
+            events_csv=events_csv,
+            alerts_csv=alerts_csv,
+            run_manifest=run_manifest,
+        )
 
     def run_video(
         self,
