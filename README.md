@@ -9,26 +9,27 @@ notebooks so data sources and model runtimes can be swapped without rewriting th
 > **Scope:** defensive sensing, detection, tracking, anomaly scoring, and human-facing alerts for a
 > fictional pipeline corridor. No automated engagement or weapons logic.
 
-## v0.3 milestone — VisDrone becomes a first-class dataset
+## v0.4 milestone — measure aerial detector quality
 
-v0.1 established the software foundation. v0.2 added the first learned detector adapter. v0.3 moves
-our learned-backend testing from arbitrary local videos to a repeatable aerial benchmark source:
-**VisDrone2019-VID**.
+v0.1 established the software foundation. v0.2 added the first learned detector adapter. v0.3 made
+VisDrone2019-VID a first-class aerial dataset. v0.4 adds the first repeatable prediction-vs-ground-
+truth evaluator.
 
 Key changes:
 
 - `FrameRecord` remains the serializable ETL/manifest contract;
 - `FrameContext` remains the in-memory runtime contract;
-- `PipelineSentinel.run_frames()` now accepts generic ordered frame streams, not only encoded MP4;
+- `PipelineSentinel.run_frames()` accepts generic ordered frame streams, not only encoded MP4;
 - `VisDroneDataset` discovers `sequences/` and `annotations/` under a VisDrone VID root;
-- `VisDroneSequence` decodes the JPEG frame sequence directly into `FrameContext` objects;
-- native VisDrone VID annotations are parsed into normalized XYXY ground truth;
-- `pipeline-sentinel visdrone-info` validates and inventories a local dataset root;
-- `pipeline-sentinel run-visdrone` runs the existing YOLO adapter directly over a VisDrone sequence;
-- every run now writes `detections.csv` in addition to alerts/video/manifest;
-- a normalized `ground_truth.csv` is emitted for VisDrone sequences that have annotations.
+- `VisDroneSequence` decodes JPEG frame sequences directly into `FrameContext` objects;
+- `pipeline-sentinel run-visdrone` emits predictions plus ground truth scoped to the exact processed frames;
+- `pipeline-sentinel evaluate-visdrone` performs deterministic one-to-one IoU matching;
+- the evaluator uses a versioned shared COCO/VisDrone ontology instead of silently renaming runtime labels;
+- benchmark outputs include per-class TP/FP/FN, precision, recall, F1, matched IoU, and auditable match rows;
+- out-of-ontology predictions such as `sports ball` are reported separately instead of disappearing.
 
-The runtime still depends on Pipeline Sentinel contracts rather than Ultralytics/Torch objects.
+The runtime still depends on Pipeline Sentinel contracts rather than Ultralytics/Torch objects, and
+the benchmark layer remains separate from model-provider result objects.
 
 ## Core application acceptance
 
@@ -69,7 +70,7 @@ uv run pipeline-sentinel run-yolo .\input.mp4 `
   --device cpu
 ```
 
-But our preferred repeatable aerial test path is now VisDrone.
+Our preferred repeatable aerial test path is VisDrone.
 
 ## VisDrone2019-VID workflow
 
@@ -105,20 +106,18 @@ uv run pipeline-sentinel visdrone-info `
   "D:\FMV\VisDrone\VisDrone2019-VID-val"
 ```
 
-This validates the root and prints the discovered sequence IDs, frame counts, and annotation status.
-
 Use the **validation split first** for zero-shot model evaluation. The train split should be reserved
-for model fitting/fine-tuning or training-time analysis so we do not quietly evaluate on data we
-trained against.
+for model fitting/fine-tuning or training-time analysis so evaluation does not quietly use training
+data.
 
-### 2. Quick YOLO acceptance run on a real aerial sequence
+### 2. Run YOLO on a real aerial sequence
 
 If no `--sequence` is given, the first sequence in sorted order is used:
 
 ```powershell
 uv run pipeline-sentinel run-visdrone `
   "D:\FMV\VisDrone\VisDrone2019-VID-val" `
-  --output outputs\visdrone `
+  --output outputs\visdrone-acceptance `
   --max-frames 300 `
   --model yolo26n.pt `
   --conf 0.25 `
@@ -131,7 +130,7 @@ For an explicit sequence:
 uv run pipeline-sentinel run-visdrone `
   "D:\FMV\VisDrone\VisDrone2019-VID-val" `
   --sequence uav0000086_00000_v `
-  --output outputs\visdrone `
+  --output outputs\visdrone-acceptance `
   --max-frames 300 `
   --model yolo26n.pt `
   --device cpu
@@ -140,7 +139,7 @@ uv run pipeline-sentinel run-visdrone `
 The sequence run is written under:
 
 ```text
-outputs/visdrone/val/<sequence-id>/
+outputs/visdrone-acceptance/val/<sequence-id>/
 ├── annotated_video.mp4
 ├── detections.csv
 ├── ground_truth.csv
@@ -148,11 +147,50 @@ outputs/visdrone/val/<sequence-id>/
 └── run_manifest.json
 ```
 
-`detections.csv` is the learned model output. `ground_truth.csv` is the normalized VisDrone annotation
-record. The next benchmark step will compare these two explicitly rather than judging performance by
-eye.
+`detections.csv` is model output. `ground_truth.csv` is normalized VisDrone truth for exactly the
+frames selected by `--frame-step` and `--max-frames`. The manifest records the detector model,
+confidence threshold, NMS IoU, image size, device, and class filter used to produce the predictions.
 
-### 3. Process sparse frames for a fast experiment
+### 3. Evaluate predictions against ground truth
+
+```powershell
+uv run pipeline-sentinel evaluate-visdrone `
+  "outputs\visdrone-acceptance\val\uav0000086_00000_v" `
+  --iou-threshold 0.50
+```
+
+The evaluator creates:
+
+```text
+benchmark/
+├── benchmark_summary.json
+├── class_metrics.csv
+├── matches.csv
+├── excluded_predictions.csv
+└── excluded_ground_truth.csv
+```
+
+The shared ontology is explicit and versioned:
+
+```text
+COCO person       -> shared person <- VisDrone pedestrian + people
+COCO bicycle      -> shared bicycle <- VisDrone bicycle
+COCO motorcycle   -> shared motor   <- VisDrone motor
+COCO car          -> shared car     <- VisDrone car
+COCO truck        -> shared truck   <- VisDrone truck
+COCO bus          -> shared bus     <- VisDrone bus
+```
+
+Matching is confidence-greedy and one-to-one within each frame and shared class. At the selected IoU
+threshold, matched predictions are TP, unmatched predictions are FP, and unmatched ground truth is
+FN. `matches.csv` preserves the evidence behind every scored row.
+
+This is the **Pipeline Sentinel shared-class IoU benchmark**, not the official VisDrone AP/mAP
+evaluator. v0.4 reports fixed-threshold precision/recall/F1. Ground-truth rows marked ignored are
+excluded, but ignored-region overlap does not yet suppress predictions. Out-of-ontology labels are
+reported separately and are not scored.
+
+### 4. Process sparse frames for a fast experiment
 
 ```powershell
 uv run pipeline-sentinel run-visdrone `
@@ -165,7 +203,7 @@ uv run pipeline-sentinel run-visdrone `
 
 VisDrone VID is distributed as image sequences rather than encoded videos. `--fps` therefore sets a
 **working cadence** for Pipeline Sentinel timestamps and the generated annotated MP4; it is not a
-claim that we recovered the original acquisition frame rate from the JPEG files.
+claim that the original acquisition frame rate was recovered from the JPEG files.
 
 ## VisDrone annotation contract
 
@@ -183,10 +221,7 @@ label,x1,y1,x2,y2,ignored
 ```
 
 The native VisDrone categories are preserved rather than pretending they are identical to COCO.
-That matters because the class vocabularies do not line up exactly: for example VisDrone separates
-`pedestrian` and `people`, while a generic COCO-pretrained YOLO model normally emits `person`.
-Class mapping and formal quality metrics therefore belong in the benchmark layer, not inside the
-runtime adapter.
+Class mapping belongs in evaluation, not in the detector adapter.
 
 ## Detection is not alerting
 
@@ -219,10 +254,20 @@ VisDrone JPEG sequence ----------+--> FrameContext stream
                          detections.csv / rendering
                                       |
                          future tracking -> events -> alerts
+
+saved detections.csv + ground_truth.csv
+                 |
+                 v
+       shared-ontology evaluator
+                 |
+          TP / FP / FN evidence
+                 |
+   precision / recall / F1 / IoU
 ```
 
 `pipeline.py` does not import Ultralytics or Torch. Dataset-specific layout knowledge lives in the
-VisDrone adapter; model-specific result handling lives in the YOLO adapter.
+VisDrone adapter; model-specific result handling lives in the YOLO adapter; model-quality comparison
+lives in the evaluation layer.
 
 ## Repository map
 
@@ -247,13 +292,15 @@ Read more:
 - `docs/visdrone.md` — VisDrone data/source adapter and benchmark workflow.
 - `docs/migration-plan.md` — Notebook 01–09 extraction map.
 - `docs/testing.md` — local acceptance and CI strategy.
+- `benchmarks/visdrone/README.md` — shared ontology and metric policy.
 
 ## Benchmark progression
 
 ```text
 synthetic integration
     -> COCO generic sanity check
-    -> VisDrone aerial-video validation
+    -> VisDrone aerial-video shared-class IoU benchmark
+    -> official-style AP/mAP and error slices
     -> UAVDT aerial/FMV cross-dataset validation
     -> mission-specific held-out evidence
 ```
@@ -268,7 +315,7 @@ using that backend in a commercial or otherwise distributed product.
 
 ## Next extraction milestones
 
-1. Add repeatable VisDrone prediction-vs-ground-truth metrics and shared-class mapping.
+1. Extend VisDrone evaluation to AP/mAP plus small-object, occlusion, and truncation slices.
 2. Notebook 05 -> tracker and event contracts.
 3. Notebook 06 -> HOG/DINOv2 embedder adapters + anomaly scorer.
 4. Notebook 07 -> EO/IR fusion component.
