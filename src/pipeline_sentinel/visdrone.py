@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 import cv2
 import pandas as pd
@@ -128,8 +128,7 @@ class VisDroneSequence:
                 f"expected {len(VISDRONE_COLUMNS)} columns"
             )
 
-        numeric_columns = VISDRONE_COLUMNS
-        for column in numeric_columns:
+        for column in VISDRONE_COLUMNS:
             frame[column] = pd.to_numeric(frame[column], errors="raise")
 
         frame["label"] = frame["object_category"].map(VISDRONE_CATEGORY_NAMES).fillna("unknown")
