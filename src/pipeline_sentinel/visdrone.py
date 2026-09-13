@@ -47,6 +47,54 @@ def _frame_index(path: Path) -> int:
         raise ValueError(f"VisDrone frame name must have a numeric stem: {path.name}") from exc
 
 
+def _resolve_dataset_root(root: Path) -> Path:
+    """Resolve common VisDrone extraction layouts to the directory containing ``sequences``.
+
+    Accepted inputs include the canonical dataset root, a path directly to ``sequences``, and an
+    outer extraction directory containing one nested VisDrone root. This avoids requiring users to
+    move or rename multi-gigabyte datasets merely to satisfy one exact archive layout.
+    """
+
+    requested = Path(root).expanduser().resolve()
+    if not requested.exists():
+        raise FileNotFoundError(requested)
+
+    if requested.is_dir() and requested.name.lower() == "sequences":
+        return requested.parent
+
+    if (requested / "sequences").is_dir():
+        return requested
+
+    candidates: list[Path] = []
+    for child in requested.iterdir():
+        if not child.is_dir():
+            continue
+        if (child / "sequences").is_dir():
+            candidates.append(child)
+            continue
+        for grandchild in child.iterdir():
+            if grandchild.is_dir() and (grandchild / "sequences").is_dir():
+                candidates.append(grandchild)
+
+    unique_candidates = sorted({path.resolve() for path in candidates}, key=str)
+    if len(unique_candidates) == 1:
+        return unique_candidates[0]
+    if len(unique_candidates) > 1:
+        formatted = "\n  - ".join(str(path) for path in unique_candidates)
+        raise ValueError(
+            "Multiple VisDrone dataset roots were found beneath the supplied path. "
+            "Pass one of these roots explicitly:\n  - " + formatted
+        )
+
+    entries = sorted(path.name for path in requested.iterdir())[:12]
+    preview = ", ".join(entries) if entries else "<empty directory>"
+    raise ValueError(
+        "Could not locate a VisDrone VID 'sequences' directory from "
+        f"'{requested}'. Looked at the supplied directory and up to two nested levels. "
+        f"Top-level entries: {preview}"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class VisDroneSequence:
     """One VisDrone VID image sequence and its optional annotation file."""
@@ -188,20 +236,13 @@ class VisDroneSequence:
 
 
 class VisDroneDataset:
-    """Discovery/validation adapter for a VisDrone2019-VID train/val root."""
+    """Discovery/validation adapter for a VisDrone2019-VID train/val dataset."""
 
     def __init__(self, root: Path) -> None:
-        self.root = Path(root).expanduser().resolve()
+        self.requested_root = Path(root).expanduser().resolve()
+        self.root = _resolve_dataset_root(self.requested_root)
         self.sequences_dir = self.root / "sequences"
         self.annotations_dir = self.root / "annotations"
-
-        if not self.root.exists():
-            raise FileNotFoundError(self.root)
-        if not self.sequences_dir.is_dir():
-            raise ValueError(
-                f"Expected VisDrone VID directory '{self.sequences_dir}'. "
-                "Pass the VisDrone2019-VID-train or VisDrone2019-VID-val root."
-            )
 
     @property
     def split_name(self) -> str:
@@ -250,6 +291,7 @@ class VisDroneDataset:
         if self.annotations_dir.is_dir():
             annotation_count = len(list(self.annotations_dir.glob("*.txt")))
         return {
+            "requested_root": str(self.requested_root),
             "root": str(self.root),
             "split": self.split_name,
             "sequence_count": len(sequence_ids),
