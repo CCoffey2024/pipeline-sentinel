@@ -5,7 +5,7 @@ import platform
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,11 +18,11 @@ from .yolo import YoloDetector
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def make_run_id() -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"{stamp}-{uuid.uuid4().hex[:8]}"
 
 
@@ -136,7 +136,7 @@ def run_configured_video(
         else (Path("outputs") / "runs" / run_id).resolve()
     )
     if resolved_output.exists() and any(resolved_output.iterdir()):
-        raise FileExistsError(f"Run output directory is not empty: {resolved_output}")
+        raise RuntimeError(f"Run output directory is not empty: {resolved_output}")
     resolved_output.mkdir(parents=True, exist_ok=True)
 
     effective_config_json = resolved_output / "effective_config.json"
