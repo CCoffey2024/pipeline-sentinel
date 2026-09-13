@@ -1,7 +1,7 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
-
-from scripts.prepare_coco_subset import build_subset
 
 
 def _write_fixture(tmp_path: Path) -> tuple[Path, Path]:
@@ -33,30 +33,49 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path]:
     return annotations, images
 
 
-def test_coco_subset_filters_categories_and_is_deterministic(tmp_path: Path) -> None:
+def _run_subset_script(
+    annotations: Path,
+    images: Path,
+    output: Path,
+) -> tuple[dict, dict]:
+    script = Path(__file__).resolve().parents[1] / "scripts" / "prepare_coco_subset.py"
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            str(annotations),
+            str(images),
+            str(output),
+            "--categories",
+            "person",
+            "car",
+            "--max-images",
+            "2",
+            "--seed",
+            "7",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subset = json.loads((output / "annotations.json").read_text(encoding="utf-8"))
+    manifest = json.loads((output / "subset_manifest.json").read_text(encoding="utf-8"))
+    return subset, manifest
+
+
+def test_coco_subset_cli_filters_categories_and_is_deterministic(tmp_path: Path) -> None:
     annotations, images = _write_fixture(tmp_path)
-    first_output = tmp_path / "first"
-    second_output = tmp_path / "second"
 
-    first_manifest = build_subset(
+    first, first_manifest = _run_subset_script(
         annotations,
         images,
-        first_output,
-        categories=["person", "car"],
-        max_images=2,
-        seed=7,
+        tmp_path / "first",
     )
-    second_manifest = build_subset(
+    second, second_manifest = _run_subset_script(
         annotations,
         images,
-        second_output,
-        categories=["person", "car"],
-        max_images=2,
-        seed=7,
+        tmp_path / "second",
     )
-
-    first = json.loads((first_output / "annotations.json").read_text(encoding="utf-8"))
-    second = json.loads((second_output / "annotations.json").read_text(encoding="utf-8"))
 
     assert first == second
     assert {category["name"] for category in first["categories"]} == {"person", "car"}
