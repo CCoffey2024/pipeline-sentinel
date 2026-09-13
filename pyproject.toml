@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pipeline-sentinel"
-version = "0.1.0"
+version = "0.2.0"
 description = "A modular computer-vision pipeline prototype for ingest, detection, anomaly scoring, and human-facing alerts."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,6 +16,11 @@ dependencies = [
   "opencv-python-headless>=4.10",
   "pandas>=2.2",
   "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+yolo = [
+  "ultralytics-opencv-headless>=8.4.147,<9",
 ]
 
 [dependency-groups]

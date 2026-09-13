@@ -5,7 +5,7 @@ from typing import Protocol
 
 import pandas as pd
 
-from .types import Detection
+from .types import Detection, FrameContext
 
 
 class Detector(Protocol):
@@ -13,7 +13,7 @@ class Detector(Protocol):
 
     name: str
 
-    def detect(self, frame_number: int) -> list[Detection]: ...
+    def detect(self, frame: FrameContext) -> list[Detection]: ...
 
 
 class GroundTruthDetector:
@@ -40,8 +40,15 @@ class GroundTruthDetector:
         if missing:
             raise ValueError(f"Ground truth missing required columns: {sorted(missing)}")
 
-    def detect(self, frame_number: int) -> list[Detection]:
-        rows = self.annotations.loc[self.annotations["frame_number"] == frame_number]
+    def detect(self, frame: FrameContext) -> list[Detection]:
+        """Return the known annotations for one runtime frame.
+
+        The image itself is intentionally ignored: this backend is a deterministic test double.
+        Its use of the same ``FrameContext`` contract as learned detectors is what lets the rest of
+        the application remain backend-agnostic.
+        """
+
+        rows = self.annotations.loc[self.annotations["frame_number"] == frame.frame_number]
         return [
             Detection(
                 frame_number=int(row.frame_number),

@@ -1,15 +1,22 @@
 project:
   name: pipeline-sentinel
-  version: 0.1.0
+  version: 0.2.0
 
 ingest:
   sample_every_n: 2
   frame_format: jpg
 
-# v0.1 uses the deterministic reference backend so the application plumbing can be tested
-# without network downloads, GPUs, or model-runtime problems.
+# The deterministic reference backend remains the safe default for software-plumbing tests.
+# Learned detector runtimes are selected explicitly through CLI/configuration.
 detector:
   backend: ground_truth
+  yolo:
+    model: yolo26n.pt
+    confidence: 0.25
+    iou: 0.70
+    imgsz: 640
+    device: null
+    class_ids: null
 
 output:
   annotated_video: true

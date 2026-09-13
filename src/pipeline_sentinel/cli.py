@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from . import __version__
@@ -8,6 +9,7 @@ from .demo import run_demo
 from .detectors import GroundTruthDetector
 from .ingest import OpenCVVideoIngestAdapter
 from .pipeline import PipelineSentinel
+from .yolo import YoloDependencyError, YoloDetector
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -37,6 +39,25 @@ def _build_parser() -> argparse.ArgumentParser:
     ref.add_argument("video", type=Path)
     ref.add_argument("ground_truth", type=Path)
     ref.add_argument("--output", type=Path, default=Path("outputs/reference"))
+
+    yolo = sub.add_parser("run-yolo", help="Run an optional Ultralytics YOLO detector backend")
+    yolo.add_argument("video", type=Path)
+    yolo.add_argument("--output", type=Path, default=Path("outputs/yolo"))
+    yolo.add_argument("--model", default="yolo26n.pt")
+    yolo.add_argument("--conf", dest="confidence", type=float, default=0.25)
+    yolo.add_argument("--iou", type=float, default=0.70)
+    yolo.add_argument("--imgsz", type=int, default=640)
+    yolo.add_argument("--device", default=None, help="Inference device, e.g. cpu, cuda:0, or 0")
+    yolo.add_argument(
+        "--class-id",
+        dest="class_ids",
+        action="append",
+        type=int,
+        default=None,
+        help="Restrict inference to a COCO class ID; repeat for multiple classes",
+    )
+    yolo.add_argument("--sensor-id", default="EO_CAM_01")
+    yolo.add_argument("--modality", choices=["EO", "IR", "OTHER"], default="EO")
     return parser
 
 
@@ -65,6 +86,27 @@ def main() -> int:
     elif args.command == "run-reference":
         pipeline = PipelineSentinel(GroundTruthDetector(args.ground_truth))
         artifacts = pipeline.run_video(args.video, args.output)
+    elif args.command == "run-yolo":
+        try:
+            detector = YoloDetector(
+                model_name=args.model,
+                confidence=args.confidence,
+                iou=args.iou,
+                imgsz=args.imgsz,
+                device=args.device,
+                class_ids=args.class_ids,
+            )
+        except YoloDependencyError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+
+        pipeline = PipelineSentinel(detector)
+        artifacts = pipeline.run_video(
+            args.video,
+            args.output,
+            sensor_id=args.sensor_id,
+            modality=args.modality,
+        )
     else:
         raise RuntimeError(f"Unhandled command: {args.command}")
 
