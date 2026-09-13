@@ -1,0 +1,29 @@
+project:
+  name: pipeline-sentinel
+  version: 0.1.0
+
+ingest:
+  sample_every_n: 2
+  frame_format: jpg
+
+# v0.1 uses the deterministic reference backend so the application plumbing can be tested
+# without network downloads, GPUs, or model-runtime problems.
+detector:
+  backend: ground_truth
+
+output:
+  annotated_video: true
+  alerts_csv: true
+  run_manifest: true
+
+benchmarks:
+  coco:
+    enabled: false
+    target_classes:
+      - person
+      - car
+      - truck
+      - bus
+      - motorcycle
+      - bicycle
+      - airplane
