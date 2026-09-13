@@ -11,6 +11,8 @@ class EventDetector(Protocol):
 
     name: str
 
+    def reset(self) -> None: ...
+
     def update(self, frame: FrameContext, tracks: list[Track]) -> list[Event]: ...
 
 
@@ -36,6 +38,9 @@ class ScenarioRoleEventDetector:
     def __init__(self, *, normal_roles: set[str] | None = None) -> None:
         self.normal_roles = set(normal_roles or {"normal_maintenance"})
         self._emitted: set[tuple[int, str]] = set()
+
+    def reset(self) -> None:
+        self._emitted.clear()
 
     def update(self, frame: FrameContext, tracks: list[Track]) -> list[Event]:
         events: list[Event] = []
@@ -93,6 +98,11 @@ class DwellEventDetector:
         self._origins: dict[int, tuple[float, float]] = {}
         self._max_displacement: dict[int, float] = {}
         self._emitted: set[int] = set()
+
+    def reset(self) -> None:
+        self._origins.clear()
+        self._max_displacement.clear()
+        self._emitted.clear()
 
     @staticmethod
     def _centroid(track: Track) -> tuple[float, float]:
