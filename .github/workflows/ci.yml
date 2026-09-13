@@ -27,3 +27,4 @@ jobs:
           python -m venv .wheel-test
           .wheel-test/bin/python -m pip install dist/*.whl
           .wheel-test/bin/pipeline-sentinel --version
+          .wheel-test/bin/python -c "from pipeline_sentinel.config import load_production_config; c, _ = load_production_config(); assert c.detector.imgsz == 960"
