@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -120,6 +120,28 @@ class VisDroneSequence:
     def frame_count(self) -> int:
         return len(self.frame_paths)
 
+    def selected_frame_numbers(
+        self,
+        *,
+        frame_step: int = 1,
+        max_frames: int | None = None,
+    ) -> list[int]:
+        """Return the exact source frame numbers selected by the runtime sampling policy."""
+
+        if frame_step <= 0:
+            raise ValueError("frame_step must be positive")
+        if max_frames is not None and max_frames <= 0:
+            raise ValueError("max_frames must be positive when provided")
+
+        selected: list[int] = []
+        for ordinal, image_path in enumerate(self.frame_paths):
+            if ordinal % frame_step != 0:
+                continue
+            if max_frames is not None and len(selected) >= max_frames:
+                break
+            selected.append(_frame_index(image_path))
+        return selected
+
     def iter_frames(
         self,
         *,
@@ -187,7 +209,11 @@ class VisDroneSequence:
         frame["ignored"] = frame["object_category"].astype(int).eq(0) | frame["score"].le(0)
         return frame
 
-    def normalized_ground_truth(self) -> pd.DataFrame:
+    def normalized_ground_truth(
+        self,
+        *,
+        frame_numbers: Iterable[int] | None = None,
+    ) -> pd.DataFrame:
         columns = [
             "frame_index",
             "target_id",
@@ -202,7 +228,13 @@ class VisDroneSequence:
             "x2",
             "y2",
         ]
-        return self.annotations()[columns].copy()
+        ground_truth = self.annotations()[columns].copy()
+        if frame_numbers is not None:
+            selected = {int(frame_number) for frame_number in frame_numbers}
+            ground_truth = ground_truth.loc[
+                ground_truth["frame_index"].astype(int).isin(selected)
+            ].copy()
+        return ground_truth
 
     def detections_for_frame(self, frame_number: int, *, include_ignored: bool = False) -> list[Detection]:
         rows = self.annotations()

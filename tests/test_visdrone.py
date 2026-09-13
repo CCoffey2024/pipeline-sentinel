@@ -95,3 +95,13 @@ def test_visdrone_sequence_yields_runtime_frames_with_sampling(tmp_path: Path) -
     assert all(frame.sensor_id == "VISDRONE:uav_test_sequence" for frame in frames)
     assert all(frame.modality == "EO" for frame in frames)
     assert all(frame.image.shape == (48, 64, 3) for frame in frames)
+
+
+def test_visdrone_ground_truth_matches_sampled_runtime_frames(tmp_path: Path) -> None:
+    sequence = VisDroneDataset(_build_visdrone_fixture(tmp_path)).first_sequence()
+    selected = sequence.selected_frame_numbers(frame_step=2, max_frames=2)
+    ground_truth = sequence.normalized_ground_truth(frame_numbers=selected)
+
+    assert selected == [1, 3]
+    assert set(ground_truth["frame_index"].astype(int)) == {1}
+    assert set(ground_truth["target_id"].astype(int)) == {101, 102}
