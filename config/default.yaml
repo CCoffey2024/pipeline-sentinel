@@ -1,6 +1,6 @@
 project:
   name: pipeline-sentinel
-  version: 0.2.0
+  version: 0.3.0
 
 ingest:
   sample_every_n: 2
@@ -20,8 +20,16 @@ detector:
 
 output:
   annotated_video: true
+  detections_csv: true
   alerts_csv: true
   run_manifest: true
+
+datasets:
+  visdrone:
+    # Paths stay outside version-controlled defaults. Supply the local train/val root on the CLI.
+    render_fps: 30.0
+    frame_step: 1
+    max_frames: null
 
 benchmarks:
   coco:
@@ -34,3 +42,7 @@ benchmarks:
       - motorcycle
       - bicycle
       - airplane
+  visdrone:
+    enabled: false
+    # Initial zero-shot comparison should use the validation split; train is reserved for fitting.
+    split: val
