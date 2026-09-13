@@ -79,6 +79,7 @@ def _add_operational_provenance(
     *,
     run_id: str,
     started_at: str,
+    completed_at: str,
     config_source: Path,
     config_sha256: str,
     effective_config_json: Path,
@@ -91,6 +92,7 @@ def _add_operational_provenance(
         {
             "run_id": run_id,
             "started_at_utc": started_at,
+            "completed_at_utc": completed_at,
             "config_source": str(config_source),
             "config_sha256": config_sha256,
             "effective_config_json": str(effective_config_json),
@@ -102,6 +104,15 @@ def _add_operational_provenance(
         }
     )
     manifest["metadata"] = metadata
+    artifact_map = dict(manifest.get("artifacts") or {})
+    artifact_map.update(
+        {
+            "effective_config_json": str(effective_config_json),
+            "run_log_jsonl": str(run_log_jsonl),
+            "run_status_json": str(run_status_json),
+        }
+    )
+    manifest["artifacts"] = artifact_map
     artifacts.run_manifest.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
@@ -124,6 +135,8 @@ def run_configured_video(
         if output_dir is not None
         else (Path("outputs") / "runs" / run_id).resolve()
     )
+    if resolved_output.exists() and any(resolved_output.iterdir()):
+        raise FileExistsError(f"Run output directory is not empty: {resolved_output}")
     resolved_output.mkdir(parents=True, exist_ok=True)
 
     effective_config_json = resolved_output / "effective_config.json"
@@ -170,10 +183,12 @@ def run_configured_video(
             sensor_id=config.runtime.sensor_id,
             modality=config.runtime.modality,
         )
+        completed_at = utc_now()
         _add_operational_provenance(
             artifacts,
             run_id=run_id,
             started_at=started_at,
+            completed_at=completed_at,
             config_source=provenance.path,
             config_sha256=provenance.sha256,
             effective_config_json=effective_config_json,
@@ -199,7 +214,6 @@ def run_configured_video(
         )
         raise
 
-    completed_at = utc_now()
     status.update(
         {
             "status": "completed",
@@ -211,6 +225,9 @@ def run_configured_video(
                 "events_csv": str(artifacts.events_csv),
                 "alerts_csv": str(artifacts.alerts_csv),
                 "run_manifest": str(artifacts.run_manifest),
+                "effective_config_json": str(effective_config_json),
+                "run_log_jsonl": str(run_log_jsonl),
+                "run_status_json": str(run_status_json),
             },
         }
     )
