@@ -32,11 +32,12 @@ data/processed/*
 outputs/*
 !outputs/.gitkeep
 
-# External benchmark data
-benchmarks/coco/*
-!benchmarks/coco/.gitkeep
-benchmarks/uavdt/*
-!benchmarks/uavdt/.gitkeep
+# External benchmark dataset bytes
+# Documentation and preparation code under benchmarks/ stay version controlled.
+benchmarks/coco/source/
+benchmarks/coco/subset/
+benchmarks/uavdt/source/
+benchmarks/uavdt/subset/
 
 # Model weights / compiled runtimes
 *.pt
