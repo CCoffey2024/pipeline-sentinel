@@ -1,6 +1,6 @@
 project:
   name: pipeline-sentinel
-  version: 0.3.0
+  version: 0.4.0
 
 ingest:
   sample_every_n: 2
@@ -46,3 +46,12 @@ benchmarks:
     enabled: false
     # Initial zero-shot comparison should use the validation split; train is reserved for fitting.
     split: val
+    evaluator: pipeline-sentinel-visdrone-shared-v1
+    iou_threshold: 0.50
+    shared_classes:
+      - person
+      - bicycle
+      - motor
+      - car
+      - truck
+      - bus
