@@ -2,6 +2,22 @@
 
 All notable changes to Pipeline Sentinel are documented here. Versions use semantic versioning.
 
+## [0.12.0] - 2026-09-14
+
+### Added
+- unified operator media-ingest endpoint accepting one encoded video or one-or-more uploaded still-image frames;
+- a single Sensor Ingest control surface for browser media uploads and read-in-place local folders/datasets;
+- request-wide upload size enforcement for multi-image submissions;
+- deterministic service tests covering unified video ingest, uploaded image sequences, mixed-media rejection, and the refactored operator controls;
+- an explicit MVP release-readiness/acceptance checklist for external workstation testing.
+
+### Changed
+- package version advanced to `0.12.0`;
+- EO/IR/OTHER modality and sensor identity are now shared ingest metadata rather than being presented as video-specific controls;
+- large image collections continue to use read-in-place local source adapters while small image sequences can be selected directly in the browser;
+- the legacy `/api/jobs/run` encoded-video endpoint remains available for backward compatibility while the operator console uses `/api/jobs/media`;
+- CI/release acceptance is hardened around the shipped operator package and Windows workstation target.
+
 ## [0.11.0] - 2026-09-13
 
 ### Added
