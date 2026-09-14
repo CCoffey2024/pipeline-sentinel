@@ -126,6 +126,28 @@ class Track:
 
 
 @dataclass(frozen=True, slots=True)
+class AnomalyObservation:
+    """One scored track observation relative to a learned normal reference."""
+
+    frame_number: int
+    timestamp_s: float
+    track_id: int
+    label: str
+    score: float
+    threshold: float
+    is_anomaly: bool
+    source: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def margin(self) -> float:
+        return self.score - self.threshold
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
 class Event:
     """Temporal or semantic evidence derived from one or more tracks."""
 
