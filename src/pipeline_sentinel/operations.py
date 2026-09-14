@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .anomaly import AnomalyReference, TrackCropAnomalyAnalyzer
 from .config import ProductionConfig, load_production_config
-from .events import DwellEventDetector, SeverityAlertPolicy
+from .embeddings import DinoV2Embedder
+from .events import ConsecutiveAnomalyEventDetector, DwellEventDetector, SeverityAlertPolicy
 from .pipeline import PipelineSentinel, RunArtifacts
 from .tracking import IoUTracker
 from .yolo import YoloDetector
@@ -46,7 +48,18 @@ class ProductionRunArtifacts:
     pipeline: RunArtifacts
 
 
-def _build_pipeline(config: ProductionConfig) -> PipelineSentinel:
+def _resolve_config_relative(path_value: str, *, config_source: Path) -> Path:
+    candidate = Path(path_value).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve()
+    return (config_source.parent / candidate).resolve()
+
+
+def _build_pipeline(
+    config: ProductionConfig,
+    *,
+    config_source: Path,
+) -> PipelineSentinel:
     detector = YoloDetector(
         model_name=config.detector.model,
         confidence=config.detector.confidence,
@@ -59,6 +72,33 @@ def _build_pipeline(config: ProductionConfig) -> PipelineSentinel:
         iou_threshold=config.tracker.iou_threshold,
         max_missed_updates=config.tracker.max_missed_updates,
     )
+
+    anomaly_analyzer = None
+    anomaly_event_detector = None
+    if config.anomaly.enabled:
+        assert config.anomaly.reference_path is not None
+        reference_path = _resolve_config_relative(
+            config.anomaly.reference_path,
+            config_source=config_source,
+        )
+        reference = AnomalyReference.load(reference_path)
+        embedder = DinoV2Embedder(
+            model_name=config.anomaly.model,
+            device=config.anomaly.device,
+        )
+        anomaly_analyzer = TrackCropAnomalyAnalyzer(
+            embedder,
+            reference,
+            labels=set(config.anomaly.labels) if config.anomaly.labels else None,
+            min_track_hits=config.anomaly.min_track_hits,
+            pad_px=config.anomaly.pad_px,
+            min_crop_size=config.anomaly.min_crop_size,
+        )
+        anomaly_event_detector = ConsecutiveAnomalyEventDetector(
+            min_consecutive=config.anomaly.event_min_consecutive,
+            severity=config.anomaly.event_severity,
+        )
+
     event_detector = None
     if config.events.dwell.enabled:
         event_detector = DwellEventDetector(
@@ -69,7 +109,9 @@ def _build_pipeline(config: ProductionConfig) -> PipelineSentinel:
     return PipelineSentinel(
         detector,
         tracker=tracker,
+        anomaly_analyzer=anomaly_analyzer,
         event_detector=event_detector,
+        anomaly_event_detector=anomaly_event_detector,
         alert_policy=SeverityAlertPolicy(minimum_severity=config.alerts.minimum_severity),
     )
 
@@ -176,7 +218,7 @@ def run_configured_video(
     )
 
     try:
-        pipeline = _build_pipeline(config)
+        pipeline = _build_pipeline(config, config_source=provenance.path)
         artifacts = pipeline.run_video(
             video,
             resolved_output,
@@ -222,6 +264,7 @@ def run_configured_video(
                 "annotated_video": str(artifacts.annotated_video),
                 "detections_csv": str(artifacts.detections_csv),
                 "tracks_csv": str(artifacts.tracks_csv),
+                "anomalies_csv": str(artifacts.anomalies_csv),
                 "events_csv": str(artifacts.events_csv),
                 "alerts_csv": str(artifacts.alerts_csv),
                 "run_manifest": str(artifacts.run_manifest),
