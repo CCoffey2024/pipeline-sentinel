@@ -33,6 +33,20 @@ class TrackerConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class RepresentationConfig:
+    enabled: bool = False
+    backend: Literal["dinov2"] = "dinov2"
+    model: str = "dinov2_vits14"
+    device: str | int | None = None
+    labels: tuple[str, ...] | None = None
+    min_track_hits: int = 3
+    sample_every_n_hits: int = 15
+    max_per_frame: int = 16
+    pad_px: int = 6
+    min_crop_size: int = 12
+
+
+@dataclass(frozen=True, slots=True)
 class AnomalyConfig:
     enabled: bool = False
     backend: Literal["dinov2"] = "dinov2"
@@ -75,6 +89,7 @@ class RuntimeConfig:
 class ProductionConfig:
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
+    representation: RepresentationConfig = field(default_factory=RepresentationConfig)
     anomaly: AnomalyConfig = field(default_factory=AnomalyConfig)
     events: EventConfig = field(default_factory=EventConfig)
     alerts: AlertConfig = field(default_factory=AlertConfig)
@@ -161,7 +176,7 @@ def parse_production_config(data: dict[str, Any]) -> ProductionConfig:
 
     _reject_unknown(
         data,
-        {"detector", "tracker", "anomaly", "events", "alerts", "runtime"},
+        {"detector", "tracker", "representation", "anomaly", "events", "alerts", "runtime"},
         "top-level",
     )
 
@@ -200,6 +215,63 @@ def parse_production_config(data: dict[str, Any]) -> ProductionConfig:
             tracker.get("max_missed_updates", 2),
             "tracker.max_missed_updates",
             minimum=0,
+        ),
+    )
+
+    representation = _mapping(data.get("representation"), "representation")
+    _reject_unknown(
+        representation,
+        {
+            "enabled",
+            "backend",
+            "model",
+            "device",
+            "labels",
+            "min_track_hits",
+            "sample_every_n_hits",
+            "max_per_frame",
+            "pad_px",
+            "min_crop_size",
+        },
+        "representation",
+    )
+    representation_enabled = representation.get("enabled", False)
+    if not isinstance(representation_enabled, bool):
+        raise ConfigError("representation.enabled must be true or false")
+    representation_backend = representation.get("backend", "dinov2")
+    if representation_backend != "dinov2":
+        raise ConfigError("representation.backend currently supports only 'dinov2'")
+    representation_model = representation.get("model", "dinov2_vits14")
+    if not isinstance(representation_model, str) or not representation_model.strip():
+        raise ConfigError("representation.model must be a non-empty string")
+    representation_device = representation.get("device")
+    if representation_device is not None and not isinstance(representation_device, (str, int)):
+        raise ConfigError("representation.device must be a string, integer, or null")
+    representation_config = RepresentationConfig(
+        enabled=representation_enabled,
+        model=representation_model,
+        device=representation_device,
+        labels=_optional_str_tuple(representation.get("labels"), "representation.labels"),
+        min_track_hits=_positive_int(
+            representation.get("min_track_hits", 3),
+            "representation.min_track_hits",
+        ),
+        sample_every_n_hits=_positive_int(
+            representation.get("sample_every_n_hits", 15),
+            "representation.sample_every_n_hits",
+        ),
+        max_per_frame=_positive_int(
+            representation.get("max_per_frame", 16),
+            "representation.max_per_frame",
+        ),
+        pad_px=_positive_int(
+            representation.get("pad_px", 6),
+            "representation.pad_px",
+            minimum=0,
+        ),
+        min_crop_size=_positive_int(
+            representation.get("min_crop_size", 12),
+            "representation.min_crop_size",
         ),
     )
 
@@ -313,6 +385,7 @@ def parse_production_config(data: dict[str, Any]) -> ProductionConfig:
     return ProductionConfig(
         detector=detector_config,
         tracker=tracker_config,
+        representation=representation_config,
         anomaly=anomaly_config,
         events=event_config,
         alerts=alert_config,

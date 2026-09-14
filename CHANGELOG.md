@@ -4,6 +4,20 @@ All notable changes to Pipeline Sentinel are documented here. Versions use seman
 
 ## [Unreleased]
 
+### Added
+- optional DINOv2 ViT-S/14 second-stage representation analysis after YOLO detection and tracking;
+- bounded mature-track sampling controls for class filtering, cadence, crop padding, and maximum
+  embeddings per frame;
+- streamed representation evidence using a CSV row index, little-endian float32 vector file, and
+  self-describing JSON manifest;
+- per-run Operator Console controls, representation summary metrics, and an interactive results tab;
+- aspect-preserving DINOv2 crop preparation and deterministic representation-stage tests.
+
+### Changed
+- the source-checkout Windows launcher installs the `dinov2` extra used by the production profile;
+- DINOv2 representation evidence is independent from normal-reference anomaly scoring and does not
+  assign event or alert meaning to visual change.
+
 ### Fixed
 - mixed-resolution still-image sequences are now normalized to the first frame's canvas with
   aspect-preserving letterboxing before detection, tracking, annotation, and evidence-video writing;

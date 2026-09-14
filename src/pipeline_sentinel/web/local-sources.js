@@ -11,6 +11,10 @@
     .source-status.bad { display:block; border-color:rgba(255,107,107,.35); color:#ffc8c8; background:rgba(255,107,107,.06); }
     .source-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
     .source-help { color:var(--muted); font-size:11px; line-height:1.5; margin-top:8px; }
+    .source-option { display:flex; align-items:flex-start; gap:9px; border:1px solid var(--line); background:#0d1319; border-radius:8px; padding:10px; margin:10px 0 14px; }
+    .source-option input { width:auto; margin-top:2px; }
+    .source-option span { display:block; color:var(--text); font-size:11px; }
+    .source-option small { display:block; color:var(--muted); font-size:10px; line-height:1.4; margin-top:3px; }
   `;
   document.head.appendChild(style);
 
@@ -66,6 +70,7 @@
         <div class="field"><label for="source-sensor-id">Sensor ID</label><input id="source-sensor-id" type="text" value="EO_CAM_01" /></div>
       </div>
       <div class="field"><label for="source-fps">Working FPS</label><input id="source-fps" type="text" value="30" /></div>
+      <label class="source-option"><input id="source-representations" type="checkbox" checked /><span>DINOv2 track representations<small>Periodically embed mature YOLO tracks with ViT-S/14. Adds representation evidence and processing time; does not label anomalies.</small></span></label>
       <button id="source-start" type="button" class="button full">Start analysis</button>
       <div id="source-progress" class="progress"><span></span></div>
       <div id="source-error" class="error"></div>
@@ -201,6 +206,7 @@
       fps,
       frame_step: frameStep,
       max_frames: maxFrames,
+      representations_enabled: byId('source-representations').checked,
     };
     return jsonFetch('/api/jobs/local-sequence', {
       method:'POST',
@@ -218,6 +224,7 @@
     form.append('sensor_id', byId('source-sensor-id').value.trim());
     form.append('modality', byId('source-modality').value);
     form.append('fps', String(fps));
+    form.append('representations_enabled', String(byId('source-representations').checked));
 
     const progress = byId('source-progress');
     const bar = progress.querySelector('span');

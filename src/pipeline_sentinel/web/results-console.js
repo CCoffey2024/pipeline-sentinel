@@ -143,6 +143,16 @@
     return tableWrap(['Frame','Track','Class','Score','Threshold','Flagged'], body, 'No anomaly observations were emitted by this run.') + '<div class="result-note">Anomaly scoring remains separate from human-facing alerts.</div>';
   }
 
+  async function representationsHtml(jobId, results) {
+    const rows = await jsonFetch(`/api/jobs/${encodeURIComponent(jobId)}/representations?limit=150`);
+    const summary = results?.representations || {};
+    const body = rows.slice().reverse().map(row => `<tr><td>${fmt(row.embedding_row)}</td><td>${fmt(row.frame_number)}</td><td>${escapeHtml(row.track_id)}</td><td>${escapeHtml(row.label)}</td><td>${fmt(row.track_hits)}</td><td>${numberOrDash(row.previous_cosine_similarity,3)}</td><td>${numberOrDash(row.representation_change,3)}</td><td>${escapeHtml(row.source || '—')}</td></tr>`).join('');
+    const status = summary.enabled
+      ? `${Number(summary.observations || 0).toLocaleString()} representations across ${Number(summary.tracks || 0).toLocaleString()} tracks · ${fmt(summary.embedding_dimension)} dimensions · ${summary.embedder || 'configured embedder'}`
+      : 'DINOv2 representation extraction was disabled for this run.';
+    return `<div class="result-note" style="margin-bottom:10px">${escapeHtml(status)}</div>${tableWrap(['Row','Frame','Track','Class','Hits','Previous similarity','Change','Embedder'], body, 'No track representations were emitted by this run.')}<div class="result-note">Representation change is descriptive cosine-distance evidence between samples of the same track. It is not an anomaly score, event, or alert.</div>`;
+  }
+
   async function eventsAlertsHtml(jobId) {
     const [events, alerts] = await Promise.all([
       jsonFetch(`/api/jobs/${encodeURIComponent(jobId)}/events?limit=150`),
@@ -167,6 +177,7 @@
       if (tab === 'overview') panel.innerHTML = overviewHtml(results);
       else if (tab === 'detections') panel.innerHTML = await detectionsHtml(job.job_id);
       else if (tab === 'tracks') panel.innerHTML = await tracksHtml(job.job_id);
+      else if (tab === 'representations') panel.innerHTML = await representationsHtml(job.job_id, results);
       else if (tab === 'anomalies') panel.innerHTML = await anomaliesHtml(job.job_id);
       else if (tab === 'events') panel.innerHTML = await eventsAlertsHtml(job.job_id);
       else if (tab === 'downloads') panel.innerHTML = downloadsHtml(artifacts);
@@ -185,7 +196,7 @@
     if (!job) return;
     const s = job.summary || {};
     const metrics = job.kind === 'run'
-      ? metric('Frames', s.frames) + metric('Detections', s.detections) + metric('Tracks', s.tracks) + metric('Anomalies', s.anomalies) + metric('Events', s.events) + metric('Alerts', s.alerts)
+      ? metric('Frames', s.frames) + metric('Detections', s.detections) + metric('Tracks', s.tracks) + metric('Representations', s.representations) + metric('Anomalies', s.anomalies) + metric('Events', s.events) + metric('Alerts', s.alerts)
       : metric('Sensors', s.sensors) + metric('Input events', s.input_events) + metric('Fused events', s.events) + metric('Alerts', s.alerts);
 
     let results = null;
@@ -232,7 +243,7 @@
       }
 
       const tabs = job.kind === 'run'
-        ? [['overview','Overview'],['detections','Detections'],['tracks','Tracks'],['anomalies','Anomalies'],['events','Events / Alerts'],['downloads','Downloads']]
+        ? [['overview','Overview'],['detections','Detections'],['tracks','Tracks'],['representations','Representations'],['anomalies','Anomalies'],['events','Events / Alerts'],['downloads','Downloads']]
         : [['overview','Overview'],['events','Events / Alerts'],['downloads','Downloads']];
       const rememberedTab = state.resultTabs[job.job_id] || 'overview';
       activeTab = tabs.some(([id]) => id === rememberedTab) ? rememberedTab : 'overview';

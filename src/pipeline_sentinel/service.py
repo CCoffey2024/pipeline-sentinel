@@ -42,6 +42,7 @@ class LocalSequenceRunRequest(BaseModel):
     frame_step: int = Field(default=1, ge=1)
     max_frames: int | None = Field(default=None, ge=1)
     fps: float = Field(default=30.0, gt=0)
+    representations_enabled: bool = True
 
 
 def _http_error(exc: Exception) -> HTTPException:
@@ -193,6 +194,7 @@ def create_app(
         sensor_id: Annotated[str, Form()] = "EO_CAM_01",
         modality: Annotated[Literal["EO", "IR", "OTHER"], Form()] = "EO",
         fps: Annotated[float, Form()] = 30.0,
+        representations_enabled: Annotated[bool, Form()] = True,
     ) -> dict[str, object]:
         """Submit one operator run from a video or an ordered group of still images."""
 
@@ -231,6 +233,7 @@ def create_app(
                         upload_path,
                         sensor_id=sensor_id,
                         modality=modality,
+                        representations_enabled=representations_enabled,
                     )
                     return job.to_dict()
                 except HTTPException:
@@ -267,6 +270,7 @@ def create_app(
                     sensor_id=sensor_id,
                     modality=modality,
                     render_fps=fps,
+                    representations_enabled=representations_enabled,
                 )
                 return job.to_dict()
             except HTTPException:
@@ -284,6 +288,7 @@ def create_app(
         file: Annotated[UploadFile, File(description="EO/IR video to analyze")],
         sensor_id: Annotated[str, Form()] = "EO_CAM_01",
         modality: Annotated[Literal["EO", "IR", "OTHER"], Form()] = "EO",
+        representations_enabled: Annotated[bool, Form()] = True,
     ) -> dict[str, object]:
         """Backward-compatible encoded-video upload endpoint."""
 
@@ -309,6 +314,7 @@ def create_app(
                 upload_path,
                 sensor_id=sensor_id,
                 modality=modality,
+                representations_enabled=representations_enabled,
             )
             return job.to_dict()
         except HTTPException:
@@ -349,6 +355,7 @@ def create_app(
                 frame_step=request.frame_step,
                 max_frames=request.max_frames,
                 render_fps=request.fps,
+                representations_enabled=request.representations_enabled,
             )
             return job.to_dict()
         except Exception as exc:

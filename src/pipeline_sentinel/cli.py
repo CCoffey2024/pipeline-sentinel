@@ -100,6 +100,9 @@ def _print_artifacts(artifacts: RunArtifacts) -> None:
     print(f"Annotated video: {artifacts.annotated_video}")
     print(f"Detections:      {artifacts.detections_csv}")
     print(f"Tracks:          {artifacts.tracks_csv}")
+    print(f"Representations: {artifacts.representations_csv}")
+    print(f"Embedding data:  {artifacts.representation_embeddings_f32}")
+    print(f"Embedding info:  {artifacts.representation_manifest_json}")
     print(f"Anomalies:       {artifacts.anomalies_csv}")
     print(f"Events:          {artifacts.events_csv}")
     print(f"Alerts:          {artifacts.alerts_csv}")
@@ -277,7 +280,13 @@ def main() -> int:
                 args.config,
                 output_dir=args.output,
             )
-        except (ConfigError, FileNotFoundError, YoloDependencyError, ValueError, RuntimeError) as exc:
+        except (
+            ConfigError,
+            FileNotFoundError,
+            YoloDependencyError,
+            ValueError,
+            RuntimeError,
+        ) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
         _print_production_artifacts(production_artifacts)
@@ -433,7 +442,9 @@ def main() -> int:
                 "dataset_root": str(dataset.root),
                 "split": dataset.split_name,
                 "sequence_id": sequence.sequence_id,
-                "annotation_path": str(sequence.annotation_path) if sequence.annotation_path else None,
+                "annotation_path": str(sequence.annotation_path)
+                if sequence.annotation_path
+                else None,
                 "ground_truth_csv": str(ground_truth_path) if ground_truth_path else None,
                 "ground_truth_scope": "processed_frames" if ground_truth_path else None,
                 "ground_truth_rows": ground_truth_rows,

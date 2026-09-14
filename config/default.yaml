@@ -1,6 +1,6 @@
 project:
   name: pipeline-sentinel
-  version: 0.12.0
+  version: 0.13.0
 
 ingest:
   sample_every_n: 2
@@ -22,6 +22,18 @@ tracking:
   backend: iou
   iou_threshold: 0.30
   max_missed_updates: 2
+
+representation:
+  enabled: false
+  backend: dinov2
+  model: dinov2_vits14
+  device: null
+  labels: null
+  min_track_hits: 3
+  sample_every_n_hits: 15
+  max_per_frame: 16
+  pad_px: 6
+  min_crop_size: 12
 
 anomaly:
   enabled: false

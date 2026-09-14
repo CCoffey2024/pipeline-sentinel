@@ -7,17 +7,15 @@ Pipeline Sentinel uses a single config-driven entry point for repeatable operati
 Install the learned-model runtime required by the configuration, then run one encoded EO/IR video:
 
 ```powershell
-uv sync --extra yolo --group dev
+uv sync --extra yolo --extra dinov2 --group dev
 
 uv run pipeline-sentinel run .\input.mp4 `
   --config .\config\production.yaml
 ```
 
-When anomaly scoring is enabled, install both optional runtimes:
-
-```powershell
-uv sync --extra yolo --extra dinov2 --group dev
-```
+The shipped development profile uses YOLO for detection and DINOv2 for track representations. A
+detector/tracker-only profile can omit the `dinov2` extra when both representation and anomaly stages
+are disabled.
 
 If `--output` is omitted, Pipeline Sentinel creates:
 
@@ -50,6 +48,11 @@ IoU tracker
   -> association IoU 0.30
   -> expire after 2 missed updates
 
+DINOv2 representations
+  -> ViT-S/14 over sampled mature track crops
+  -> every 15 hits, bounded to 16 crops per frame
+  -> descriptive evidence, not anomaly labels
+
 DINOv2 anomaly scoring
   -> disabled by default
   -> requires a fitted normal-reference .npz artifact when enabled
@@ -64,6 +67,26 @@ Severity alert policy
 The 960 inference size is intentional. In the current VisDrone validation slice, 960 materially improved person recall over 640 while avoiding the larger precision penalty observed at 1280. That benchmark result is evidence for the current default, not a claim that 960 is universally optimal.
 
 Dwell and anomaly-event policies remain conservative by default because persistence thresholds and definitions of normal activity are deployment policy, not safe universal inference defaults.
+
+## Representation configuration
+
+The representation stage is independent of anomaly scoring and needs no fitted normal reference:
+
+```yaml
+representation:
+  enabled: true
+  backend: dinov2
+  model: dinov2_vits14
+  device: null
+  labels: [person, car, truck, bus, motorcycle, bicycle]
+  min_track_hits: 3
+  sample_every_n_hits: 15
+  max_per_frame: 16
+  pad_px: 6
+  min_crop_size: 12
+```
+
+See `docs/representations.md` for workload controls and vector interpretation.
 
 ## Anomaly configuration
 
@@ -95,6 +118,9 @@ A completed production-style run contains:
 annotated_video.mp4
 detections.csv
 tracks.csv
+representations.csv
+representation_embeddings.f32
+representation_manifest.json
 anomalies.csv
 events.csv
 alerts.csv
@@ -104,7 +130,10 @@ run_log.jsonl
 run_status.json
 ```
 
-`anomalies.csv` is always present. It is empty when anomaly scoring is disabled. When enabled, it records scored track observations separately from semantic events and human-facing alerts.
+The representation CSV indexes normalized vectors stored row-major in the float32 data file. Its JSON
+manifest records the vector shape and storage contract. `anomalies.csv` is always present and is empty
+when anomaly scoring is disabled. When enabled, it records scored track observations separately from
+semantic events and human-facing alerts.
 
 `effective_config.json` is the parsed configuration actually used by the application plus the SHA-256 of the source YAML. `run_manifest.json` contains model/runtime output counts and embeds the run ID, configuration provenance, Python version, executable, and platform metadata.
 
@@ -124,7 +153,9 @@ demo
 pipeline-sentinel-fit-reference
 ```
 
-The `run` command is different. It is the stable application-facing entry point. Model, tracker, anomaly, event, alert, sensor, and modality choices come from validated configuration rather than requiring an operator to reconstruct a long experimental command line.
+The `run` command is different. It is the stable application-facing entry point. Detector,
+representation, tracker, anomaly, event, alert, sensor, and modality choices come from validated
+configuration rather than requiring an operator to reconstruct a long experimental command line.
 
 The intended progression is:
 

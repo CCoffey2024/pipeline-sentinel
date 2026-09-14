@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from pipeline_sentinel.operations import run_configured_video
@@ -36,7 +37,17 @@ class FailingYoloDetector(FakeYoloDetector):
         raise RuntimeError(f"synthetic inference failure at frame {frame.frame_number}")
 
 
-def _config(path: Path) -> Path:
+class FakeDinoV2Embedder:
+    name = "fake_dinov2"
+
+    def __init__(self, **_kwargs: object) -> None:
+        pass
+
+    def encode(self, images) -> np.ndarray:
+        return np.ones((len(images), 4), dtype=np.float32)
+
+
+def _config(path: Path, *, representations_enabled: bool = False) -> Path:
     path.write_text(
         """
 detector:
@@ -49,6 +60,13 @@ tracker:
   backend: iou
   iou_threshold: 0.30
   max_missed_updates: 2
+representation:
+  enabled: REPRESENTATIONS_ENABLED
+  min_track_hits: 1
+  sample_every_n_hits: 1
+  max_per_frame: 4
+  pad_px: 0
+  min_crop_size: 4
 events:
   dwell:
     enabled: false
@@ -57,7 +75,7 @@ alerts:
 runtime:
   sensor_id: EO_TEST
   modality: EO
-""".strip(),
+""".replace("REPRESENTATIONS_ENABLED", str(representations_enabled).lower()).strip(),
         encoding="utf-8",
     )
     return path
@@ -93,6 +111,29 @@ def test_configured_run_writes_operational_artifacts(tmp_path: Path, monkeypatch
         for line in artifacts.run_log_jsonl.read_text(encoding="utf-8").splitlines()
     ]
     assert log_events == ["run_started", "run_completed"]
+
+
+def test_configured_run_executes_dinov2_representation_stage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    video = tmp_path / "input.mp4"
+    generate_demo_video(video, tmp_path / "gt.csv", frame_count=3, size=(64, 64))
+    config_path = _config(tmp_path / "production.yaml", representations_enabled=True)
+
+    monkeypatch.setattr("pipeline_sentinel.operations.YoloDetector", FakeYoloDetector)
+    monkeypatch.setattr("pipeline_sentinel.operations.DinoV2Embedder", FakeDinoV2Embedder)
+    artifacts = run_configured_video(video, config_path, output_dir=tmp_path / "run")
+
+    vectors = np.fromfile(artifacts.pipeline.representation_embeddings_f32, dtype="<f4")
+    manifest = json.loads(
+        artifacts.pipeline.representation_manifest_json.read_text(encoding="utf-8")
+    )
+    assert vectors.shape == (12,)
+    assert manifest["enabled"] is True
+    assert manifest["observations"] == 3
+    assert manifest["embedding_dimension"] == 4
+    assert manifest["configuration"]["embedder"] == "fake_dinov2"
 
 
 def test_failed_run_preserves_failure_status(tmp_path: Path, monkeypatch) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,29 @@ def _table(manager: LocalSourceOperatorJobManager, job_id: str, artifact_name: s
         return pd.read_csv(path)
     except pd.errors.EmptyDataError:
         return pd.DataFrame()
+
+
+def _optional_table(
+    manager: LocalSourceOperatorJobManager,
+    job_id: str,
+    artifact_name: str,
+) -> pd.DataFrame:
+    try:
+        return _table(manager, job_id, artifact_name)
+    except (KeyError, FileNotFoundError):
+        return pd.DataFrame()
+
+
+def _optional_json(
+    manager: LocalSourceOperatorJobManager,
+    job_id: str,
+    artifact_name: str,
+) -> dict[str, Any]:
+    try:
+        path = manager.artifact_path(job_id, artifact_name)
+        return dict(json.loads(path.read_text(encoding="utf-8")))
+    except (KeyError, FileNotFoundError, json.JSONDecodeError, ValueError, TypeError):
+        return {}
 
 
 def _finite(value: Any) -> float | None:
@@ -76,6 +100,12 @@ def _run_result_summary(
 ) -> dict[str, object]:
     detections = _table(manager, job_id, "detections_csv")
     tracks = _table(manager, job_id, "tracks_csv")
+    representations = _optional_table(manager, job_id, "representations_csv")
+    representation_manifest = _optional_json(
+        manager,
+        job_id,
+        "representation_manifest_json",
+    )
 
     class_rows: list[dict[str, object]] = []
     if not detections.empty and "label" in detections.columns:
@@ -90,7 +120,9 @@ def _run_result_summary(
         if not tracks.empty and {"label", "track_id"}.issubset(tracks.columns):
             track_counts = {
                 str(label): int(count)
-                for label, count in tracks.groupby("label", dropna=False)["track_id"].nunique().items()
+                for label, count in tracks.groupby("label", dropna=False)["track_id"]
+                .nunique()
+                .items()
             }
 
         for label, count in counts.head(30).items():
@@ -132,6 +164,18 @@ def _run_result_summary(
         "classes": class_rows,
         "detections_by_frame": frame_series,
         "detection_frame_stats": frame_stats,
+        "representations": {
+            "enabled": bool(representation_manifest.get("enabled", False)),
+            "observations": int(len(representations)),
+            "tracks": (
+                int(representations["track_id"].nunique())
+                if not representations.empty and "track_id" in representations.columns
+                else 0
+            ),
+            "embedding_dimension": representation_manifest.get("embedding_dimension"),
+            "analyzer": representation_manifest.get("analyzer"),
+            "embedder": (representation_manifest.get("configuration") or {}).get("embedder"),
+        },
         "storage": _job_storage(manager, job_id),
     }
 
@@ -218,6 +262,19 @@ def build_operator_results_router(manager: LocalSourceOperatorJobManager) -> API
             if job.kind != "run":
                 return []
             return manager.tabular_records(job_id, "anomalies_csv", limit=limit)
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @router.get("/api/jobs/{job_id}/representations")
+    def job_representations(
+        job_id: str,
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> list[dict[str, Any]]:
+        try:
+            job = manager.get_job(job_id)
+            if job.kind != "run" or not (job.artifacts or {}).get("representations_csv"):
+                return []
+            return manager.tabular_records(job_id, "representations_csv", limit=limit)
         except Exception as exc:
             raise _http_error(exc) from exc
 

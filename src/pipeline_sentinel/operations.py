@@ -16,6 +16,7 @@ from .config import ProductionConfig, load_production_config
 from .embeddings import DinoV2Embedder
 from .events import ConsecutiveAnomalyEventDetector, DwellEventDetector, SeverityAlertPolicy
 from .pipeline import PipelineSentinel, RunArtifacts
+from .representations import TrackCropRepresentationAnalyzer
 from .tracking import IoUTracker
 from .types import FrameContext
 from .yolo import YoloDetector
@@ -37,7 +38,9 @@ def append_run_log(path: Path, *, event: str, run_id: str, **fields: Any) -> Non
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
-    Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
+    Path(path).write_text(
+        json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +78,23 @@ def _build_pipeline(
         max_missed_updates=config.tracker.max_missed_updates,
     )
 
+    representation_embedder = None
+    representation_analyzer = None
+    if config.representation.enabled:
+        representation_embedder = DinoV2Embedder(
+            model_name=config.representation.model,
+            device=config.representation.device,
+        )
+        representation_analyzer = TrackCropRepresentationAnalyzer(
+            representation_embedder,
+            labels=(set(config.representation.labels) if config.representation.labels else None),
+            min_track_hits=config.representation.min_track_hits,
+            sample_every_n_hits=config.representation.sample_every_n_hits,
+            max_per_frame=config.representation.max_per_frame,
+            pad_px=config.representation.pad_px,
+            min_crop_size=config.representation.min_crop_size,
+        )
+
     anomaly_analyzer = None
     anomaly_event_detector = None
     if config.anomaly.enabled:
@@ -84,10 +104,17 @@ def _build_pipeline(
             config_source=config_source,
         )
         reference = AnomalyReference.load(reference_path)
-        embedder = DinoV2Embedder(
-            model_name=config.anomaly.model,
-            device=config.anomaly.device,
-        )
+        if (
+            representation_embedder is not None
+            and config.representation.model == config.anomaly.model
+            and config.representation.device == config.anomaly.device
+        ):
+            embedder = representation_embedder
+        else:
+            embedder = DinoV2Embedder(
+                model_name=config.anomaly.model,
+                device=config.anomaly.device,
+            )
         anomaly_analyzer = TrackCropAnomalyAnalyzer(
             embedder,
             reference,
@@ -111,6 +138,7 @@ def _build_pipeline(
     return PipelineSentinel(
         detector,
         tracker=tracker,
+        representation_analyzer=representation_analyzer,
         anomaly_analyzer=anomaly_analyzer,
         event_detector=event_detector,
         anomaly_event_detector=anomaly_event_detector,
@@ -256,6 +284,9 @@ def _run_configured_source(
                 "annotated_video": str(artifacts.annotated_video),
                 "detections_csv": str(artifacts.detections_csv),
                 "tracks_csv": str(artifacts.tracks_csv),
+                "representations_csv": str(artifacts.representations_csv),
+                "representation_embeddings_f32": str(artifacts.representation_embeddings_f32),
+                "representation_manifest_json": str(artifacts.representation_manifest_json),
                 "anomalies_csv": str(artifacts.anomalies_csv),
                 "events_csv": str(artifacts.events_csv),
                 "alerts_csv": str(artifacts.alerts_csv),

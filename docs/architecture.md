@@ -35,21 +35,21 @@ future stream / still source ----+
                                       v
                                     Track[]
                                       |
-                    +-----------------+-----------------+
-                    |                                   |
-                    v                                   v
-             AnomalyAnalyzer                     EventDetector
-                    |                                   |
-                    v                                   |
-          AnomalyObservation[]                          |
-                    |                                   |
-                    v                                   |
-          AnomalyEventDetector                          |
-                    |                                   |
-                    +-----------------+-----------------+
-                                      |
-                                      v
-                                    Event[]
+                 +--------------------+--------------------+
+                 |                    |                    |
+                 v                    v                    v
+    RepresentationAnalyzer     AnomalyAnalyzer       EventDetector
+                 |                    |                    |
+                 v                    v                    |
+ RepresentationObservation[] AnomalyObservation[]         |
+                                      |                    |
+                                      v                    |
+                            AnomalyEventDetector            |
+                                      |                    |
+                                      +--------------------+
+                                               |
+                                               v
+                                             Event[]
                                       |
                                       v
                              AlertPolicy contract
@@ -66,11 +66,12 @@ future stream / still source ----+
 The semantic separation is now:
 
 ```text
-detection != track != anomaly observation != event != alert
+detection != track != representation != anomaly observation != event != alert
 ```
 
-A detector observes an object in one frame. A tracker establishes temporal identity. An anomaly
-analyzer may score the tracked appearance against a learned normal reference. Event logic decides
+A detector observes an object in one frame. A tracker establishes temporal identity. A representation
+analyzer may describe sampled tracked appearance without assigning operational meaning. An anomaly
+analyzer may separately score appearance against a learned normal reference. Event logic decides
 whether track history or persistent anomaly evidence represents a semantic condition. Alert policy
 then decides whether a human operator should be notified.
 
@@ -112,6 +113,12 @@ number, and optional metadata. Ultralytics/PyTorch result objects must not cross
 A detector observation associated with a stable runtime `track_id`. It carries the current box,
 class, confidence, observation count (`hits`), and first-seen frame/time. It does not depend on the
 internal state type of any tracking library.
+
+### `RepresentationObservation`
+
+One sampled track-crop embedding with frame/time, track identity, class, crop bounds, track maturity,
+and optional cosine similarity to the preceding sample. It is descriptive evidence and does not
+claim anomaly, event, or alert semantics.
 
 ### `AnomalyObservation`
 
@@ -170,8 +177,10 @@ class Embedder(Protocol):
 ```
 
 The optional DINOv2 adapter keeps Torch, devices, model loading, and preprocessing inside the
-adapter. `TrackCropAnomalyAnalyzer` receives only NumPy embeddings and a persisted normal-reference
-artifact.
+adapter. `TrackCropRepresentationAnalyzer` periodically embeds mature tracks and emits normalized,
+framework-neutral representation evidence. `TrackCropAnomalyAnalyzer` receives only NumPy embeddings
+and a persisted normal-reference artifact. These are independent consumers of the same embedder
+boundary.
 
 The current Notebook-06-derived baseline uses cosine distance from the normal centroid with a fitted
 normal quantile threshold. A persistence-gated anomaly event detector separates a single unusual
@@ -224,6 +233,9 @@ A single-sensor runtime run produces:
 annotated_video.mp4
 detections.csv
 tracks.csv
+representations.csv
+representation_embeddings.f32
+representation_manifest.json
 anomalies.csv
 events.csv
 alerts.csv
@@ -258,6 +270,9 @@ fake detector tests
 
 IoU tracker tests
     -> stable IDs, class-aware association, expiration, reset
+
+representation tests
+    -> track maturity, sampling cadence, workload bounds, vector/index streaming
 
 anomaly tests
     -> reference fitting, serialization, scoring, persistence

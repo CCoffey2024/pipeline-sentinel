@@ -11,6 +11,9 @@ def test_bundled_production_config_is_valid() -> None:
     assert config.detector.backend == "yolo"
     assert config.detector.imgsz == 960
     assert config.tracker.backend == "iou"
+    assert config.representation.enabled is True
+    assert config.representation.backend == "dinov2"
+    assert config.representation.sample_every_n_hits == 15
     assert config.anomaly.enabled is False
     assert config.anomaly.backend == "dinov2"
     assert config.events.dwell.enabled is False
@@ -32,6 +35,17 @@ tracker:
   backend: iou
   iou_threshold: 0.25
   max_missed_updates: 3
+representation:
+  enabled: true
+  backend: dinov2
+  model: dinov2_vits14
+  device: cpu
+  labels: [person, car]
+  min_track_hits: 4
+  sample_every_n_hits: 10
+  max_per_frame: 8
+  pad_px: 8
+  min_crop_size: 16
 anomaly:
   enabled: true
   backend: dinov2
@@ -64,6 +78,10 @@ runtime:
     assert config.detector.model == "yolo26n.pt"
     assert config.detector.imgsz == 960
     assert config.tracker.max_missed_updates == 3
+    assert config.representation.enabled is True
+    assert config.representation.labels == ("person", "car")
+    assert config.representation.sample_every_n_hits == 10
+    assert config.representation.max_per_frame == 8
     assert config.anomaly.enabled is True
     assert config.anomaly.reference_path == "refs/normal.npz"
     assert config.anomaly.labels == ("person",)

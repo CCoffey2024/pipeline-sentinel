@@ -32,6 +32,9 @@ def _fake_run(video_path: Path, config_path: Path, *, output_dir: Path | None = 
         "annotated_video": output / "annotated_video.mp4",
         "detections_csv": output / "detections.csv",
         "tracks_csv": output / "tracks.csv",
+        "representations_csv": output / "representations.csv",
+        "representation_embeddings_f32": output / "representation_embeddings.f32",
+        "representation_manifest_json": output / "representation_manifest.json",
         "anomalies_csv": output / "anomalies.csv",
         "events_csv": output / "events.csv",
         "alerts_csv": output / "alerts.csv",
@@ -41,8 +44,13 @@ def _fake_run(video_path: Path, config_path: Path, *, output_dir: Path | None = 
         "run_status_json": output / "run_status.json",
     }
     paths["annotated_video"].write_bytes(b"fake-video")
-    for name in ("detections_csv", "tracks_csv", "anomalies_csv"):
+    for name in ("detections_csv", "tracks_csv", "representations_csv", "anomalies_csv"):
         paths[name].write_text("frame_number\n", encoding="utf-8")
+    paths["representation_embeddings_f32"].write_bytes(b"")
+    paths["representation_manifest_json"].write_text(
+        '{"enabled": true, "observations": 6, "embedding_dimension": 384}',
+        encoding="utf-8",
+    )
     paths["events_csv"].write_text(
         "event_id,frame_number,timestamp_s,event_type,severity,track_id,label,confidence,source,message,metadata\n",
         encoding="utf-8",
@@ -59,6 +67,8 @@ def _fake_run(video_path: Path, config_path: Path, *, output_dir: Path | None = 
                 "frames_processed": 12,
                 "detections_emitted": 30,
                 "unique_tracks": 4,
+                "representations_emitted": 6,
+                "represented_tracks": 3,
                 "anomalies_flagged": 1,
                 "events_emitted": 2,
                 "alerts_emitted": 1,
@@ -74,6 +84,9 @@ def _fake_run(video_path: Path, config_path: Path, *, output_dir: Path | None = 
         annotated_video=paths["annotated_video"],
         detections_csv=paths["detections_csv"],
         tracks_csv=paths["tracks_csv"],
+        representations_csv=paths["representations_csv"],
+        representation_embeddings_f32=paths["representation_embeddings_f32"],
+        representation_manifest_json=paths["representation_manifest_json"],
         anomalies_csv=paths["anomalies_csv"],
         events_csv=paths["events_csv"],
         alerts_csv=paths["alerts_csv"],
@@ -155,6 +168,8 @@ def test_operator_run_persists_runtime_identity(monkeypatch, tmp_path):
             "frames": 12,
             "detections": 30,
             "tracks": 4,
+            "representations": 6,
+            "represented_tracks": 3,
             "anomalies": 1,
             "events": 2,
             "alerts": 1,
