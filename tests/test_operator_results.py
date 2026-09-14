@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,26 @@ def _completed_job(app, tmp_path: Path, *, managed_input: bool = False) -> tuple
         "0,0.0,1,car,0.90,1,0.0,1,2,10,12\n"
         "1,0.033,1,car,0.70,2,0.033,2,2,11,12\n"
         "0,0.0,2,person,0.80,1,0.0,20,3,28,18\n",
+        encoding="utf-8",
+    )
+    (output / "representations.csv").write_text(
+        "embedding_row,frame_number,timestamp_s,track_id,label,track_hits,embedding_dim,embedding_norm,previous_cosine_similarity,representation_change,source\n"
+        "0,0,0.0,1,car,3,384,1.0,,,dinov2:dinov2_vits14\n"
+        "1,1,0.033,1,car,18,384,1.0,0.98,0.02,dinov2:dinov2_vits14\n",
+        encoding="utf-8",
+    )
+    (output / "representation_embeddings.f32").write_bytes(b"representations")
+    (output / "representation_manifest.json").write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "observations": 2,
+                "represented_tracks": 1,
+                "embedding_dimension": 384,
+                "analyzer": "track_crop_representation",
+                "configuration": {"embedder": "dinov2:dinov2_vits14"},
+            }
+        ),
         encoding="utf-8",
     )
     (output / "anomalies.csv").write_text(
@@ -69,6 +90,9 @@ def _completed_job(app, tmp_path: Path, *, managed_input: bool = False) -> tuple
             "annotated_video": str(output / "annotated_video.mp4"),
             "detections_csv": str(output / "detections.csv"),
             "tracks_csv": str(output / "tracks.csv"),
+            "representations_csv": str(output / "representations.csv"),
+            "representation_embeddings_f32": str(output / "representation_embeddings.f32"),
+            "representation_manifest_json": str(output / "representation_manifest.json"),
             "anomalies_csv": str(output / "anomalies.csv"),
             "events_csv": str(output / "events.csv"),
             "alerts_csv": str(output / "alerts.csv"),
@@ -100,6 +124,14 @@ def test_operator_results_summary_and_tables(tmp_path: Path) -> None:
         assert payload["classes"][0]["tracks"] == 1
         assert payload["storage"]["total_bytes"] > 0
         assert payload["storage"]["input_is_managed"] is False
+        assert payload["representations"] == {
+            "enabled": True,
+            "observations": 2,
+            "tracks": 1,
+            "embedding_dimension": 384,
+            "analyzer": "track_crop_representation",
+            "embedder": "dinov2:dinov2_vits14",
+        }
 
         detections = client.get(f"/api/jobs/{job.job_id}/detections?limit=2")
         assert detections.status_code == 200
@@ -109,11 +141,17 @@ def test_operator_results_summary_and_tables(tmp_path: Path) -> None:
         assert tracks.status_code == 200
         assert len(tracks.json()) == 2
 
+        representations = client.get(f"/api/jobs/{job.job_id}/representations?limit=2")
+        assert representations.status_code == 200
+        assert len(representations.json()) == 2
+
         script = client.get("/results-console.js")
         assert script.status_code == 200
         assert "Delete run & files" in script.text
         assert "Detections by class" in script.text
         assert "Browse annotated frames (codec-safe)" in script.text
+        assert "Representations" in script.text
+        assert "representation_change" in script.text
         assert "state.resultTabs" in script.text
 
         page = client.get("/")

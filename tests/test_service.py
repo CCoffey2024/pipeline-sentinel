@@ -20,6 +20,9 @@ def _fake_run(video_path: Path, config_path: Path, *, output_dir: Path | None = 
     annotated = output / "annotated_video.mp4"
     detections = output / "detections.csv"
     tracks = output / "tracks.csv"
+    representations = output / "representations.csv"
+    representation_embeddings = output / "representation_embeddings.f32"
+    representation_manifest = output / "representation_manifest.json"
     anomalies = output / "anomalies.csv"
     events = output / "events.csv"
     alerts = output / "alerts.csv"
@@ -31,6 +34,12 @@ def _fake_run(video_path: Path, config_path: Path, *, output_dir: Path | None = 
     annotated.write_bytes(b"video")
     detections.write_text("frame_number\n", encoding="utf-8")
     tracks.write_text("frame_number\n", encoding="utf-8")
+    representations.write_text("frame_number\n", encoding="utf-8")
+    representation_embeddings.write_bytes(b"")
+    representation_manifest.write_text(
+        '{"enabled": true, "observations": 2, "embedding_dimension": 384}',
+        encoding="utf-8",
+    )
     anomalies.write_text("frame_number\n", encoding="utf-8")
     events.write_text(
         "event_id,frame_number,timestamp_s,event_type,severity,track_id,label,confidence,source,message,metadata\n",
@@ -49,6 +58,8 @@ def _fake_run(video_path: Path, config_path: Path, *, output_dir: Path | None = 
                 "frames_processed": 5,
                 "detections_emitted": 8,
                 "unique_tracks": 2,
+                "representations_emitted": 2,
+                "represented_tracks": 2,
                 "anomalies_flagged": 1,
                 "events_emitted": 1,
                 "alerts_emitted": 1,
@@ -69,6 +80,9 @@ def _fake_run(video_path: Path, config_path: Path, *, output_dir: Path | None = 
             annotated_video=annotated,
             detections_csv=detections,
             tracks_csv=tracks,
+            representations_csv=representations,
+            representation_embeddings_f32=representation_embeddings,
+            representation_manifest_json=representation_manifest,
             anomalies_csv=anomalies,
             events_csv=events,
             alerts_csv=alerts,
@@ -115,6 +129,8 @@ def test_operator_console_health_and_uploaded_run(monkeypatch, tmp_path):
         assert script.status_code == 200
         assert "Media files" in script.text
         assert "Local folder / dataset" in script.text
+        assert "DINOv2 track representations" in script.text
+        assert "source-representations" in script.text
         assert "/api/jobs/media" in script.text
 
         health = client.get("/api/health")
@@ -152,22 +168,40 @@ def test_unified_media_endpoint_accepts_video(monkeypatch, tmp_path):
     with TestClient(app) as client:
         response = client.post(
             "/api/jobs/media",
-            data={"sensor_id": "EO_MEDIA", "modality": "EO", "fps": "30"},
+            data={
+                "sensor_id": "EO_MEDIA",
+                "modality": "EO",
+                "fps": "30",
+                "representations_enabled": "false",
+            },
             files=[("files", ("clip.mp4", b"video-bytes", "video/mp4"))],
         )
         assert response.status_code == 202
         payload = _wait_for_job(client, response.json()["job_id"])
         assert payload["status"] == "completed"
         assert payload["sensor_id"] == "EO_MEDIA"
+        runtime_config = yaml.safe_load(
+            (tmp_path / "operator" / "runtime-configs" / f"{payload['job_id']}.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert runtime_config["representation"]["enabled"] is False
 
 
 def test_unified_media_endpoint_accepts_image_sequence(monkeypatch, tmp_path):
-    monkeypatch.setattr("pipeline_sentinel.operator_local_sources.run_configured_frames", _fake_frames)
+    monkeypatch.setattr(
+        "pipeline_sentinel.operator_local_sources.run_configured_frames", _fake_frames
+    )
     app = create_app(workspace=tmp_path / "operator")
     with TestClient(app) as client:
         response = client.post(
             "/api/jobs/media",
-            data={"sensor_id": "IR_FRAMES", "modality": "IR", "fps": "12.5"},
+            data={
+                "sensor_id": "IR_FRAMES",
+                "modality": "IR",
+                "fps": "12.5",
+                "representations_enabled": "false",
+            },
             files=[
                 ("files", ("frame0002.jpg", b"two", "image/jpeg")),
                 ("files", ("frame0001.jpg", b"one", "image/jpeg")),
@@ -181,6 +215,12 @@ def test_unified_media_endpoint_accepts_image_sequence(monkeypatch, tmp_path):
         assert payload["modality"] == "IR"
         assert payload["summary"]["source_type"] == "image_folder"
         assert payload["summary"]["frames"] == 5
+        runtime_config = yaml.safe_load(
+            (tmp_path / "operator" / "runtime-configs" / f"{payload['job_id']}.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert runtime_config["representation"]["enabled"] is False
 
 
 def test_unified_media_endpoint_rejects_mixed_video_and_images(tmp_path):

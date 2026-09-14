@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pipeline-sentinel"
 dynamic = ["version"]
-description = "A modular computer-vision application for ingest, detection, tracking, anomaly scoring, event generation, sensor fusion, and human-facing alerts."
+description = "A modular computer-vision application for ingest, detection, tracking, visual representations, anomaly scoring, event generation, sensor fusion, and human-facing alerts."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -26,6 +26,7 @@ yolo = [
 ]
 dinov2 = [
   "torch>=2.2,<3",
+  "torchvision>=0.17,<1",
 ]
 operator = [
   "fastapi>=0.116,<1",

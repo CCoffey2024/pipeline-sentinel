@@ -27,7 +27,9 @@ pip install "pipeline-sentinel[yolo]"
 
 No Ultralytics model weights are bundled in the Pipeline Sentinel wheel or source distribution.
 
-For development from this repository, `start-operator.cmd` installs both the `operator` and `yolo` extras so the current YOLO-backed test workflow continues to work. That convenience does not change the license of either project.
+For development from this repository, `start-operator.cmd` installs the `operator`, `yolo`, and
+`dinov2` extras so the current YOLO-plus-ViT workflow operates from the local console. That
+convenience does not change the license of any provider.
 
 ## Models and datasets
 

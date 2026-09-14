@@ -101,6 +101,7 @@ class LocalSourceOperatorJobManager(OperatorJobManager):
         max_frames: int | None = None,
         render_fps: float = 30.0,
         config_path: Path | None = None,
+        representations_enabled: bool | None = None,
     ) -> OperatorJob:
         if frame_step <= 0:
             raise ValueError("frame_step must be positive")
@@ -145,6 +146,7 @@ class LocalSourceOperatorJobManager(OperatorJobManager):
             max_frames,
             render_fps,
             Path(config_path).expanduser().resolve() if config_path else None,
+            representations_enabled,
         )
         return self.get_job(job_id)
 
@@ -160,6 +162,7 @@ class LocalSourceOperatorJobManager(OperatorJobManager):
         max_frames: int | None,
         render_fps: float,
         config_path: Path | None,
+        representations_enabled: bool | None,
     ) -> None:
         output_dir = Path(self._jobs[job_id].output_dir)
         self._update(job_id, status="running", started_at_utc=utc_now())
@@ -169,6 +172,7 @@ class LocalSourceOperatorJobManager(OperatorJobManager):
                 modality=modality,
                 output_path=self.workspace / "runtime-configs" / f"{job_id}.yaml",
                 config_path=config_path,
+                representations_enabled=representations_enabled,
             )
             sequence = open_local_sequence(source_type, source_root, sequence_id=sequence_id)
             frames = sequence.iter_frames(
@@ -200,6 +204,9 @@ class LocalSourceOperatorJobManager(OperatorJobManager):
                 "annotated_video": str(result.pipeline.annotated_video),
                 "detections_csv": str(result.pipeline.detections_csv),
                 "tracks_csv": str(result.pipeline.tracks_csv),
+                "representations_csv": str(result.pipeline.representations_csv),
+                "representation_embeddings_f32": str(result.pipeline.representation_embeddings_f32),
+                "representation_manifest_json": str(result.pipeline.representation_manifest_json),
                 "anomalies_csv": str(result.pipeline.anomalies_csv),
                 "events_csv": str(result.pipeline.events_csv),
                 "alerts_csv": str(result.pipeline.alerts_csv),
@@ -214,6 +221,8 @@ class LocalSourceOperatorJobManager(OperatorJobManager):
                 "frames": manifest.get("frames_processed", 0),
                 "detections": manifest.get("detections_emitted", 0),
                 "tracks": manifest.get("unique_tracks", 0),
+                "representations": manifest.get("representations_emitted", 0),
+                "represented_tracks": manifest.get("represented_tracks", 0),
                 "anomalies": manifest.get("anomalies_flagged", 0),
                 "events": manifest.get("events_emitted", 0),
                 "alerts": manifest.get("alerts_emitted", 0),

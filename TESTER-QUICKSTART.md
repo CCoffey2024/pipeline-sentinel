@@ -77,7 +77,7 @@ queued -> running -> completed
 
 Select the completed run. The initial dashboard should provide:
 
-- frame, detection, track, anomaly, event, and alert counts;
+- frame, detection, track, representation, anomaly, event, and alert counts;
 - detections by class;
 - detection density across frames;
 - interactive Detections, Tracks, Anomalies, Events / Alerts, and Downloads tabs;
@@ -137,6 +137,8 @@ Feedback on usability is just as useful as outright failures: confusing controls
 
 This release intentionally does not yet provide first-class RTSP/USB/network-camera ingest, authentication for remote multi-user deployment, radiometric thermal calibration for generic image folders, or guaranteed decoding of proprietary camera codecs.
 
-DINOv2 anomaly scoring and mission-specific dwell-event rules are disabled in the default production profile until deployment-specific reference data and policy thresholds are supplied.
+DINOv2 track representations are enabled in the development profile and may add first-run model
+download and inference time. DINOv2 anomaly scoring and mission-specific dwell-event rules remain
+disabled until deployment-specific reference data and policy thresholds are supplied.
 
 For the complete acceptance procedure, see `docs/mvp-acceptance.md` in the source repository.

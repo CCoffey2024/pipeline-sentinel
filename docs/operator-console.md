@@ -33,12 +33,12 @@ The service does not duplicate detector, tracker, anomaly, event, fusion, or ale
 From a source checkout on Windows, double-click `start-operator.cmd`, or run:
 
 ```powershell
-uv sync --extra operator --extra yolo --group dev
+uv sync --extra operator --extra yolo --extra dinov2 --group dev
 uv run pipeline-sentinel-operator --open-browser
 ```
 
-The source-checkout launcher installs the optional YOLO backend because that is the detector used by
-the current development/acceptance profile.
+The source-checkout launcher installs the optional YOLO detector and DINOv2 representation backend
+used by the current development profile.
 
 From an installed release wheel, the Apache-licensed operator shell can be installed without
 Ultralytics:
@@ -54,6 +54,12 @@ To run the current YOLO production profile, opt in to the separate `yolo` extra 
 python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator,yolo]"
 ```
 
+Add `dinov2` to the extras when using track representations:
+
+```powershell
+python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator,yolo,dinov2]"
+```
+
 The optional Ultralytics runtime and model weights retain their own upstream license terms; see
 `THIRD_PARTY_NOTICES.md`.
 
@@ -63,6 +69,10 @@ The default URL is `http://127.0.0.1:8765/`. OpenAPI documentation is available 
 
 The console exposes one **Start Analysis Run** card with two source modes. Modality and sensor ID are
 shared metadata because EO/IR describes the sensor, not the file container.
+
+The **DINOv2 track representations** checkbox enables bounded, second-stage ViT embedding after YOLO
+and tracking. It applies equally to browser-selected media and read-in-place local sequences. Clear
+it for detector/tracker-only runs.
 
 ### Media files
 
@@ -143,7 +153,7 @@ source disk / dataset
 FrameContext
         |
         v
-detector -> tracker -> anomaly/events -> render
+detector -> tracker -> sampled DINOv2 representations + anomaly/events -> render
         |
         +--> streaming CSV evidence
         +--> annotated output video
@@ -181,6 +191,7 @@ GET    /api/jobs/{job_id}/events
 GET    /api/jobs/{job_id}/results
 GET    /api/jobs/{job_id}/detections
 GET    /api/jobs/{job_id}/tracks
+GET    /api/jobs/{job_id}/representations
 GET    /api/jobs/{job_id}/anomalies
 GET    /api/jobs/{job_id}/preview-frame
 GET    /api/jobs/{job_id}/artifacts
@@ -204,10 +215,10 @@ interactive results console rather than requiring the operator to inspect CSV/JS
 
 The completed-run view includes:
 
-- summary metrics for frames, detections, tracks, anomalies, events, and alerts;
+- summary metrics for frames, detections, tracks, representations, anomalies, events, and alerts;
 - detections-by-class bars and a detections-per-frame trend;
-- interactive **Overview**, **Detections**, **Tracks**, **Anomalies**, **Events / Alerts**, and
-  **Downloads** tabs;
+- interactive **Overview**, **Detections**, **Tracks**, **Representations**, **Anomalies**,
+  **Events / Alerts**, and **Downloads** tabs;
 - storage reporting for generated evidence and Pipeline Sentinel-managed uploaded input;
 - **Delete run & files** cleanup for finished jobs;
 - annotated imagery playback/review.

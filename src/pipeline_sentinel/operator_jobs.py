@@ -115,7 +115,9 @@ class OperatorJobManager:
             directory.mkdir(parents=True, exist_ok=True)
 
         self._lock = threading.RLock()
-        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="sentinel-job")
+        self._executor = ThreadPoolExecutor(
+            max_workers=max_workers, thread_name_prefix="sentinel-job"
+        )
         self._jobs: dict[str, OperatorJob] = {}
         self._load_jobs()
 
@@ -199,6 +201,7 @@ class OperatorJobManager:
         modality: Modality,
         output_path: Path,
         config_path: Path | None,
+        representations_enabled: bool | None = None,
     ) -> tuple[Path, str]:
         if not sensor_id.strip():
             raise ValueError("sensor_id must be non-empty")
@@ -215,6 +218,10 @@ class OperatorJobManager:
                 reference_path = (provenance.path.parent / reference_path).resolve()
             anomaly["reference_path"] = str(reference_path)
         payload["anomaly"] = anomaly
+        representation = payload.get("representation") or {}
+        if representations_enabled is not None:
+            representation["enabled"] = bool(representations_enabled)
+        payload["representation"] = representation
         payload["runtime"] = {"sensor_id": sensor_id.strip(), "modality": modality}
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -228,6 +235,7 @@ class OperatorJobManager:
         sensor_id: str,
         modality: Modality,
         config_path: Path | None = None,
+        representations_enabled: bool | None = None,
     ) -> OperatorJob:
         video = Path(video_path).expanduser().resolve()
         if not video.is_file():
@@ -263,6 +271,7 @@ class OperatorJobManager:
             sensor_id.strip(),
             modality,
             Path(config_path).expanduser().resolve() if config_path else None,
+            representations_enabled,
         )
         return self.get_job(job_id)
 
@@ -273,6 +282,7 @@ class OperatorJobManager:
         sensor_id: str,
         modality: Modality,
         config_path: Path | None,
+        representations_enabled: bool | None,
     ) -> None:
         output_dir = Path(self._jobs[job_id].output_dir)
         self._update(job_id, status="running", started_at_utc=utc_now())
@@ -282,6 +292,7 @@ class OperatorJobManager:
                 modality=modality,
                 output_path=self.workspace / "runtime-configs" / f"{job_id}.yaml",
                 config_path=config_path,
+                representations_enabled=representations_enabled,
             )
             result = run_configured_video(
                 video_path,
@@ -293,6 +304,9 @@ class OperatorJobManager:
                 "annotated_video": str(result.pipeline.annotated_video),
                 "detections_csv": str(result.pipeline.detections_csv),
                 "tracks_csv": str(result.pipeline.tracks_csv),
+                "representations_csv": str(result.pipeline.representations_csv),
+                "representation_embeddings_f32": str(result.pipeline.representation_embeddings_f32),
+                "representation_manifest_json": str(result.pipeline.representation_manifest_json),
                 "anomalies_csv": str(result.pipeline.anomalies_csv),
                 "events_csv": str(result.pipeline.events_csv),
                 "alerts_csv": str(result.pipeline.alerts_csv),
@@ -305,6 +319,8 @@ class OperatorJobManager:
                 "frames": manifest.get("frames_processed", 0),
                 "detections": manifest.get("detections_emitted", 0),
                 "tracks": manifest.get("unique_tracks", 0),
+                "representations": manifest.get("representations_emitted", 0),
+                "represented_tracks": manifest.get("represented_tracks", 0),
                 "anomalies": manifest.get("anomalies_flagged", 0),
                 "events": manifest.get("events_emitted", 0),
                 "alerts": manifest.get("alerts_emitted", 0),

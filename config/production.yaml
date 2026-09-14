@@ -14,6 +14,26 @@ tracker:
   iou_threshold: 0.30
   max_missed_updates: 2
 
+representation:
+  # DINOv2 is a descriptive second stage over mature YOLO tracks. These embeddings and their
+  # within-track change are evidence; they are not anomaly labels, events, or alerts.
+  enabled: true
+  backend: dinov2
+  model: dinov2_vits14
+  device: null
+  labels:
+    - person
+    - car
+    - truck
+    - bus
+    - motorcycle
+    - bicycle
+  min_track_hits: 3
+  sample_every_n_hits: 15
+  max_per_frame: 16
+  pad_px: 6
+  min_crop_size: 12
+
 anomaly:
   # Disabled until a deployment provides a curated normal-reference artifact.
   enabled: false

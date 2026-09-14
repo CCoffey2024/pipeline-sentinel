@@ -1,8 +1,8 @@
 # Pipeline Sentinel
 
 Pipeline Sentinel is a modular computer-vision application for turning EO/IR video and image streams
-into detections, tracks, anomaly evidence, semantic events, multisensor corroboration, and
-human-facing alerts.
+into detections, tracks, visual representations, anomaly evidence, semantic events, multisensor
+corroboration, and human-facing alerts.
 
 The project began as a sequence of learning/R&D notebooks. Stable ideas are promoted into an
 installable Python package behind explicit contracts so source adapters, model runtimes, trackers,
@@ -11,7 +11,7 @@ representation models, fusion policies, delivery layers, and alert logic can cha
 > **Scope:** defensive sensing, detection, tracking, anomaly scoring, sensor fusion, and analyst
 > alerting for a fictional pipeline corridor. No automated engagement or weapons logic.
 
-## Current development milestone — v0.12 MVP candidate
+## Current development milestone — v0.13 representation evidence
 
 ```text
 v0.1   ingest + data contracts
@@ -26,12 +26,13 @@ v0.9   EO/IR semantic-event late fusion
 v0.10  local service/API + operator-facing web console
 v0.11  read-in-place image folders + VisDrone/UAVDT operator sources
 v0.12  unified video/image ingest + MVP packaging/acceptance hardening
+v0.13  DINOv2 track representations + auditable embedding evidence
 ```
 
 The semantic rule remains:
 
 ```text
-detection != track != anomaly observation != event != alert
+detection != track != representation != anomaly observation != event != alert
 ```
 
 The application-delivery rule is equally important:
@@ -57,12 +58,12 @@ From a source checkout on Windows, double-click:
 start-operator.cmd
 ```
 
-The development launcher synchronizes the operator shell plus the optional YOLO backend used by the
-current production profile, starts the local service, and opens the browser. The equivalent command
-is:
+The development launcher synchronizes the operator shell plus the YOLO and DINOv2 backends used by
+the current production profile, starts the local service, and opens the browser. The equivalent
+command is:
 
 ```powershell
-uv sync --extra operator --extra yolo --group dev
+uv sync --extra operator --extra yolo --extra dinov2 --group dev
 uv run pipeline-sentinel-operator --open-browser
 ```
 
@@ -80,6 +81,7 @@ From the UI an operator can:
 - use native VisDrone or UAVDT image-sequence layouts;
 - assign a sensor ID and EO, IR, or OTHER modality independently of file type;
 - set working FPS for generic still-image sequences;
+- enable or disable periodically sampled DINOv2 ViT-S/14 track representations per run;
 - start a production analysis run with one button;
 - watch queued/running/completed/failed jobs;
 - inspect summary counts and alerts;
@@ -131,8 +133,9 @@ python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator,yolo
 The optional Ultralytics runtime and its model weights are not covered by Pipeline Sentinel's
 Apache-2.0 license; their upstream license terms remain in force. See `THIRD_PARTY_NOTICES.md`.
 
-DINOv2 remains a separate optional extra because anomaly scoring is disabled in the shipped
-production profile until a fitted normal-reference artifact is supplied.
+DINOv2 remains a separate optional extra. The v0.13 development profile uses it for descriptive
+track representations while anomaly scoring remains disabled until a fitted normal-reference
+artifact is supplied.
 
 Model weights and datasets are not vendored into the release artifact. The configured detector model
 may need to be obtained by its upstream runtime on first use.
@@ -145,6 +148,7 @@ FrameContext
     -> Detection[]
     -> Tracker
     -> Track[]
+        |----> RepresentationAnalyzer -> RepresentationObservation[]
         |              \
         |               -> EventDetector
         v
@@ -171,7 +175,7 @@ Torch tensors, OpenCV handles, or other provider-specific objects.
 The CLI remains useful for automation and development:
 
 ```powershell
-uv sync --extra yolo --group dev
+uv sync --extra yolo --extra dinov2 --group dev
 uv run pipeline-sentinel validate-config .\config\production.yaml
 
 uv run pipeline-sentinel run .\input.mp4 `
@@ -184,6 +188,9 @@ A completed production run contains:
 annotated_video.mp4
 detections.csv
 tracks.csv
+representations.csv
+representation_embeddings.f32
+representation_manifest.json
 anomalies.csv
 events.csv
 alerts.csv
@@ -199,6 +206,20 @@ at 1280. Dwell and anomaly events remain disabled until deployment-specific poli
 is supplied.
 
 See `docs/production-run.md`.
+
+## DINOv2 representation evidence
+
+The v0.13 development profile keeps YOLO as the fast detector and uses DINOv2 ViT-S/14 as a sampled
+second stage over mature tracks. It emits normalized embeddings and within-track cosine-change
+evidence without claiming that visual change is anomalous.
+
+```text
+YOLO detection -> IoU track -> sampled crop -> DINOv2 ViT-S/14 -> representation evidence
+```
+
+Vectors stream to `representation_embeddings.f32`; `representations.csv` provides the corresponding
+row index, frame, track, label, crop bounds, and similarity to the previous representation of that
+track. See `docs/representations.md`.
 
 ## Notebook 06 -> anomaly scoring
 
@@ -385,6 +406,7 @@ Useful documentation:
 - `docs/architecture.md` — runtime boundaries and contracts.
 - `docs/production-run.md` — config-driven single-sensor execution and provenance.
 - `docs/anomaly-scoring.md` — normal-reference and DINOv2 adapter boundary.
+- `docs/representations.md` — DINOv2 track sampling, evidence format, and interpretation.
 - `docs/sensor-fusion.md` — EO/IR late-fusion contract and assumptions.
 - `docs/release.md` — release gates, installation, checksums, and rollback.
 - `docs/migration-plan.md` — notebook-to-application extraction map.

@@ -126,6 +126,46 @@ class Track:
 
 
 @dataclass(frozen=True, slots=True)
+class RepresentationObservation:
+    """One framework-neutral visual representation of a tracked object crop."""
+
+    frame_number: int
+    timestamp_s: float
+    track_id: int
+    label: str
+    embedding: np.ndarray = field(repr=False)
+    source: str = "unknown"
+    track_hits: int = 1
+    x1: int = 0
+    y1: int = 0
+    x2: int = 0
+    y2: int = 0
+    previous_cosine_similarity: float | None = None
+
+    def __post_init__(self) -> None:
+        vector = np.asarray(self.embedding, dtype=np.float32)
+        if vector.ndim != 1 or vector.size == 0:
+            raise ValueError("embedding must be a non-empty 1-D vector")
+        if not np.all(np.isfinite(vector)):
+            raise ValueError("embedding must contain only finite values")
+        object.__setattr__(self, "embedding", vector)
+
+    @property
+    def embedding_dim(self) -> int:
+        return int(self.embedding.size)
+
+    @property
+    def embedding_norm(self) -> float:
+        return float(np.linalg.norm(self.embedding))
+
+    @property
+    def representation_change(self) -> float | None:
+        if self.previous_cosine_similarity is None:
+            return None
+        return 1.0 - self.previous_cosine_similarity
+
+
+@dataclass(frozen=True, slots=True)
 class AnomalyObservation:
     """One scored track observation relative to a learned normal reference."""
 

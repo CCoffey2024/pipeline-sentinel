@@ -23,8 +23,8 @@ class DinoV2Embedder:
     """Lazy DINOv2 representation adapter.
 
     The rest of Pipeline Sentinel sees only NumPy embeddings. Torch models, devices, and hub
-    objects remain inside this adapter boundary. The model is loaded on first encode so anomaly
-    support can remain disabled without importing Torch.
+    objects remain inside this adapter boundary. The model is loaded on first encode so all
+    DINOv2-backed stages can remain disabled without importing Torch.
     """
 
     def __init__(
@@ -61,6 +61,8 @@ class DinoV2Embedder:
             requested = self.requested_device
             if requested is None:
                 self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            elif isinstance(requested, int):
+                self.device = f"cuda:{requested}"
             else:
                 self.device = str(requested)
 
@@ -94,14 +96,28 @@ class DinoV2Embedder:
         else:
             raise ValueError("DINOv2 input must have shape HxW, HxWx3, or HxWx4")
 
-        resized = cv2.resize(
-            rgb,
-            (self.image_size, self.image_size),
-            interpolation=cv2.INTER_AREA,
-        )
-        array = resized.astype(np.float32) / 255.0
         mean = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
         std = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
+        height, width = rgb.shape[:2]
+        scale = min(self.image_size / width, self.image_size / height)
+        resized_width = min(self.image_size, max(1, round(width * scale)))
+        resized_height = min(self.image_size, max(1, round(height * scale)))
+        interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+        resized = cv2.resize(
+            rgb,
+            (resized_width, resized_height),
+            interpolation=interpolation,
+        )
+        # Mean-colored padding normalizes to approximately zero while preserving crop geometry.
+        canvas = np.empty((self.image_size, self.image_size, 3), dtype=np.float32)
+        canvas[...] = mean * 255.0
+        x_offset = (self.image_size - resized_width) // 2
+        y_offset = (self.image_size - resized_height) // 2
+        canvas[
+            y_offset : y_offset + resized_height,
+            x_offset : x_offset + resized_width,
+        ] = resized
+        array = canvas / 255.0
         array = (array - mean) / std
         return np.transpose(array, (2, 0, 1))
 
