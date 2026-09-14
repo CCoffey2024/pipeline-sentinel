@@ -272,4 +272,8 @@
   });
 
   updateLocalPlaceholder();
+
+  const resultsScript = document.createElement('script');
+  resultsScript.src = '/results-console.js';
+  document.body.appendChild(resultsScript);
 })();
