@@ -53,11 +53,7 @@ class LocalSourceOperatorJobManager(OperatorJobManager):
             modality=modality,
             output_dir=str(output_dir),
             artifacts={},
-            summary={
-                "source_type": source_type,
-                "sequence_id": sequence.sequence_id,
-                "source_frames": sequence.frame_count,
-            },
+            summary={"source_type": source_type, "sequence_id": sequence.sequence_id},
         )
         self._register(job)
         self._executor.submit(
@@ -116,7 +112,6 @@ class LocalSourceOperatorJobManager(OperatorJobManager):
                     "source_type": source_type,
                     "source_root": str(sequence.source_root),
                     "sequence_id": sequence.sequence_id,
-                    "source_frames": sequence.frame_count,
                     "frame_step": frame_step,
                     "max_frames": max_frames,
                     "imagery_access": "read_in_place",
@@ -139,7 +134,6 @@ class LocalSourceOperatorJobManager(OperatorJobManager):
             summary = {
                 "source_type": source_type,
                 "sequence_id": sequence.sequence_id,
-                "source_frames": sequence.frame_count,
                 "frames": manifest.get("frames_processed", 0),
                 "detections": manifest.get("detections_emitted", 0),
                 "tracks": manifest.get("unique_tracks", 0),
