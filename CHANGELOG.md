@@ -2,6 +2,24 @@
 
 All notable changes to Pipeline Sentinel are documented here. Versions use semantic versioning.
 
+## [0.10.0] - 2026-09-13
+
+### Added
+- local FastAPI operator service and bundled browser console;
+- browser video upload with explicit sensor ID and EO/IR/OTHER modality selection;
+- persistent JSON job registry with bounded worker execution and restart interruption handling;
+- operator job APIs for status, alerts, events, artifacts, and multisensor fusion;
+- one-click late-fusion workflow for completed sensor runs;
+- `pipeline-sentinel-operator` launcher and Windows `start-operator.cmd` double-click helper;
+- `operator` optional dependency extra for the UI/service plus YOLO runtime;
+- local-service security guardrails, including loopback-only default binding and scoped artifact access;
+- deterministic operator-job and API tests plus packaged UI/launcher release smoke checks.
+
+### Changed
+- package version advanced to `0.10.0`;
+- application delivery is now separated from analytics: the UI and HTTP service consume the same production/fusion APIs and evidence artifacts as the CLI;
+- the default operator worker count is one to avoid accidental concurrent GPU-heavy model stacks on a workstation.
+
 ## [0.9.0] - 2026-09-13
 
 ### Added
