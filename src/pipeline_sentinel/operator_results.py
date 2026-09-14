@@ -6,7 +6,6 @@ from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
 
 from .operator_local_sources import LocalSourceOperatorJobManager
 
@@ -162,13 +161,7 @@ def build_operator_results_router(manager: LocalSourceOperatorJobManager) -> API
     """Build lightweight result-inspection and disposal routes for the local operator console."""
 
     router = APIRouter()
-
-    @router.get("/results-console.js")
-    def results_console_javascript() -> FileResponse:
-        script = Path(__file__).with_name("web") / "results-console.js"
-        if not script.is_file():
-            raise HTTPException(status_code=500, detail="bundled results console is missing")
-        return FileResponse(script, media_type="text/javascript")
+    result_cache: dict[str, dict[str, object]] = {}
 
     @router.get("/api/jobs/{job_id}/results")
     def job_results(job_id: str) -> dict[str, object]:
@@ -176,9 +169,16 @@ def build_operator_results_router(manager: LocalSourceOperatorJobManager) -> API
             job = manager.get_job(job_id)
             if job.status != "completed":
                 raise ValueError("results are available only for completed jobs")
-            if job.kind == "fusion":
-                return _fusion_result_summary(manager, job_id)
-            return _run_result_summary(manager, job_id)
+            cached = result_cache.get(job_id)
+            if cached is not None:
+                return cached
+            summary = (
+                _fusion_result_summary(manager, job_id)
+                if job.kind == "fusion"
+                else _run_result_summary(manager, job_id)
+            )
+            result_cache[job_id] = summary
+            return summary
         except Exception as exc:
             raise _http_error(exc) from exc
 
@@ -227,7 +227,9 @@ def build_operator_results_router(manager: LocalSourceOperatorJobManager) -> API
             job = manager.get_job(job_id)
             if job.status in {"queued", "running"}:
                 raise HTTPException(status_code=409, detail="active jobs cannot be deleted")
-            return manager.delete_job(job_id)
+            deleted = manager.delete_job(job_id)
+            result_cache.pop(job_id, None)
+            return deleted
         except HTTPException:
             raise
         except Exception as exc:
