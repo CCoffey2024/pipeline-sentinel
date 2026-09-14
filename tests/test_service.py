@@ -77,6 +77,31 @@ def _fake_run(video_path: Path, config_path: Path, *, output_dir: Path | None = 
     )
 
 
+def _fake_frames(
+    frames,
+    config_path: Path,
+    *,
+    source_name: str,
+    render_fps: float,
+    output_dir: Path | None = None,
+    run_metadata=None,
+):
+    del frames, source_name, render_fps, run_metadata
+    return _fake_run(Path("uploaded-frames"), config_path, output_dir=output_dir)
+
+
+def _wait_for_job(client: TestClient, job_id: str) -> dict[str, object]:
+    deadline = time.monotonic() + 3.0
+    payload = None
+    while time.monotonic() < deadline:
+        payload = client.get(f"/api/jobs/{job_id}").json()
+        if payload["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.02)
+    assert payload is not None
+    return payload
+
+
 def test_operator_console_health_and_uploaded_run(monkeypatch, tmp_path):
     monkeypatch.setattr("pipeline_sentinel.operator_jobs.run_configured_video", _fake_run)
     app = create_app(workspace=tmp_path / "operator", max_upload_bytes=1024 * 1024)
@@ -85,6 +110,12 @@ def test_operator_console_health_and_uploaded_run(monkeypatch, tmp_path):
         assert page.status_code == 200
         assert "Pipeline Sentinel" in page.text
         assert "Start Analysis Run" in page.text
+
+        script = client.get("/local-sources.js")
+        assert script.status_code == 200
+        assert "Media files" in script.text
+        assert "Local folder / dataset" in script.text
+        assert "/api/jobs/media" in script.text
 
         health = client.get("/api/health")
         assert health.status_code == 200
@@ -98,14 +129,7 @@ def test_operator_console_health_and_uploaded_run(monkeypatch, tmp_path):
         assert response.status_code == 202
         job_id = response.json()["job_id"]
 
-        deadline = time.monotonic() + 3.0
-        payload = None
-        while time.monotonic() < deadline:
-            payload = client.get(f"/api/jobs/{job_id}").json()
-            if payload["status"] in {"completed", "failed"}:
-                break
-            time.sleep(0.02)
-        assert payload is not None
+        payload = _wait_for_job(client, job_id)
         assert payload["status"] == "completed"
         assert payload["sensor_id"] == "IR_CAM_TEST"
         assert payload["modality"] == "IR"
@@ -122,6 +146,58 @@ def test_operator_console_health_and_uploaded_run(monkeypatch, tmp_path):
         assert video.content == b"video"
 
 
+def test_unified_media_endpoint_accepts_video(monkeypatch, tmp_path):
+    monkeypatch.setattr("pipeline_sentinel.operator_jobs.run_configured_video", _fake_run)
+    app = create_app(workspace=tmp_path / "operator")
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/jobs/media",
+            data={"sensor_id": "EO_MEDIA", "modality": "EO", "fps": "30"},
+            files=[("files", ("clip.mp4", b"video-bytes", "video/mp4"))],
+        )
+        assert response.status_code == 202
+        payload = _wait_for_job(client, response.json()["job_id"])
+        assert payload["status"] == "completed"
+        assert payload["sensor_id"] == "EO_MEDIA"
+
+
+def test_unified_media_endpoint_accepts_image_sequence(monkeypatch, tmp_path):
+    monkeypatch.setattr("pipeline_sentinel.operator_local_sources.run_configured_frames", _fake_frames)
+    app = create_app(workspace=tmp_path / "operator")
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/jobs/media",
+            data={"sensor_id": "IR_FRAMES", "modality": "IR", "fps": "12.5"},
+            files=[
+                ("files", ("frame0002.jpg", b"two", "image/jpeg")),
+                ("files", ("frame0001.jpg", b"one", "image/jpeg")),
+                ("files", ("frame0003.png", b"three", "image/png")),
+            ],
+        )
+        assert response.status_code == 202
+        payload = _wait_for_job(client, response.json()["job_id"])
+        assert payload["status"] == "completed"
+        assert payload["sensor_id"] == "IR_FRAMES"
+        assert payload["modality"] == "IR"
+        assert payload["summary"]["source_type"] == "image_folder"
+        assert payload["summary"]["frames"] == 5
+
+
+def test_unified_media_endpoint_rejects_mixed_video_and_images(tmp_path):
+    app = create_app(workspace=tmp_path / "operator")
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/jobs/media",
+            data={"sensor_id": "EO_1", "modality": "EO", "fps": "30"},
+            files=[
+                ("files", ("clip.mp4", b"video", "video/mp4")),
+                ("files", ("frame0001.jpg", b"image", "image/jpeg")),
+            ],
+        )
+        assert response.status_code == 400
+        assert "mixed media runs" in response.json()["detail"]
+
+
 def test_operator_rejects_unsupported_upload_extension(tmp_path):
     app = create_app(workspace=tmp_path / "operator")
     with TestClient(app) as client:
@@ -131,3 +207,10 @@ def test_operator_rejects_unsupported_upload_extension(tmp_path):
             files={"file": ("notes.txt", b"nope", "text/plain")},
         )
         assert response.status_code == 400
+
+        media_response = client.post(
+            "/api/jobs/media",
+            data={"sensor_id": "EO_1", "modality": "EO", "fps": "30"},
+            files=[("files", ("notes.txt", b"nope", "text/plain"))],
+        )
+        assert media_response.status_code == 400
