@@ -62,6 +62,8 @@ class AnomalyReference:
 
     def save(self, path: Path) -> Path:
         target = Path(path).expanduser().resolve()
+        if target.suffix.lower() != ".npz":
+            target = target.with_suffix(".npz")
         target.parent.mkdir(parents=True, exist_ok=True)
         metadata = {
             "format_version": 1,
@@ -80,7 +82,7 @@ class AnomalyReference:
         return target
 
     @classmethod
-    def load(cls, path: Path) -> "AnomalyReference":
+    def load(cls, path: Path) -> AnomalyReference:
         source = Path(path).expanduser().resolve()
         if not source.is_file():
             raise FileNotFoundError(source)
