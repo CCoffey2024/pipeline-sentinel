@@ -37,7 +37,8 @@ def test_local_source_inspection_is_read_only(tmp_path: Path) -> None:
         assert '/local-sources.js' in page.text
         script = client.get("/local-sources.js")
         assert script.status_code == 200
-        assert "Local Image Sequence" in script.text
+        assert "Local folder / dataset" in script.text
+        assert "Image folder" in script.text
 
 
 def test_remote_mode_disables_server_filesystem_source_access(tmp_path: Path) -> None:
