@@ -55,7 +55,7 @@ jobs:
           .release-test/bin/python -m pipeline_sentinel --version | grep "${VERSION}"
           .release-test/bin/pipeline-sentinel-fit-reference --help > /dev/null
           .release-test/bin/pipeline-sentinel-operator --help > /dev/null
-          .release-test/bin/python -c "from pathlib import Path; import pipeline_sentinel; p=Path(pipeline_sentinel.__file__).parent / 'web'; assert (p / 'operator.html').is_file() and (p / 'local-sources.js').is_file()"
+          .release-test/bin/python -c "from pathlib import Path; import pipeline_sentinel; p=Path(pipeline_sentinel.__file__).parent / 'web'; assert (p / 'operator.html').is_file() and (p / 'local-sources.js').is_file() and (p / 'results-console.js').is_file()"
           .release-test/bin/python -c "from pipeline_sentinel.image_sources import UavdtDataset, ImageFolderSequence; assert UavdtDataset and ImageFolderSequence"
           .release-test/bin/python -c "from pipeline_sentinel.config import load_production_config; c, _ = load_production_config(); assert c.detector.imgsz == 960 and c.anomaly.enabled is False"
           .release-test/bin/python -c "from pipeline_sentinel.fusion import load_fusion_config; c, _ = load_fusion_config(); assert c.strategy == 'temporal_consensus' and c.min_sensors == 2"
@@ -69,7 +69,8 @@ jobs:
           python -m venv .operator-release-test
           .operator-release-test/bin/python -m pip install "${WHEEL}[operator]"
           .operator-release-test/bin/pipeline-sentinel-operator --version | grep "${VERSION}"
-          .operator-release-test/bin/python -c "from pathlib import Path; from pipeline_sentinel.service import create_app; app=create_app(workspace=Path('.operator-release-smoke')); assert any(r.path == '/api/jobs/media' for r in app.routes); assert any(r.path == '/api/jobs/local-sequence' for r in app.routes); app.state.job_manager.close()"
+          .operator-release-test/bin/python -c "from pathlib import Path; import pipeline_sentinel; p=Path(pipeline_sentinel.__file__).parent / 'web'; assert (p / 'operator.html').is_file() and (p / 'local-sources.js').is_file() and (p / 'results-console.js').is_file()"
+          .operator-release-test/bin/python -c "from pathlib import Path; from pipeline_sentinel.service import create_app; app=create_app(workspace=Path('.operator-release-smoke')); paths={getattr(r, 'path', None) for r in app.routes}; assert '/api/jobs/media' in paths; assert '/api/jobs/local-sequence' in paths; app.state.job_manager.close()"
 
       - name: Create GitHub release
         env:
