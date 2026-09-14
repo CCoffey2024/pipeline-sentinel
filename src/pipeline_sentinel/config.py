@@ -33,6 +33,21 @@ class TrackerConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class AnomalyConfig:
+    enabled: bool = False
+    backend: Literal["dinov2"] = "dinov2"
+    reference_path: str | None = None
+    model: str = "dinov2_vits14"
+    device: str | int | None = None
+    labels: tuple[str, ...] | None = None
+    min_track_hits: int = 3
+    pad_px: int = 6
+    min_crop_size: int = 12
+    event_min_consecutive: int = 3
+    event_severity: Severity = "warning"
+
+
+@dataclass(frozen=True, slots=True)
 class DwellConfig:
     enabled: bool = False
     min_hits: int = 30
@@ -60,6 +75,7 @@ class RuntimeConfig:
 class ProductionConfig:
     detector: DetectorConfig = field(default_factory=DetectorConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
+    anomaly: AnomalyConfig = field(default_factory=AnomalyConfig)
     events: EventConfig = field(default_factory=EventConfig)
     alerts: AlertConfig = field(default_factory=AlertConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
@@ -134,10 +150,20 @@ def _optional_str_tuple(value: Any, name: str) -> tuple[str, ...] | None:
     return values or None
 
 
+def _severity(value: Any, name: str) -> Severity:
+    if value not in {"info", "warning", "critical"}:
+        raise ConfigError(f"{name} must be info, warning, or critical")
+    return value
+
+
 def parse_production_config(data: dict[str, Any]) -> ProductionConfig:
     """Parse and validate one production runtime configuration mapping."""
 
-    _reject_unknown(data, {"detector", "tracker", "events", "alerts", "runtime"}, "top-level")
+    _reject_unknown(
+        data,
+        {"detector", "tracker", "anomaly", "events", "alerts", "runtime"},
+        "top-level",
+    )
 
     detector = _mapping(data.get("detector"), "detector")
     _reject_unknown(
@@ -177,6 +203,68 @@ def parse_production_config(data: dict[str, Any]) -> ProductionConfig:
         ),
     )
 
+    anomaly = _mapping(data.get("anomaly"), "anomaly")
+    _reject_unknown(
+        anomaly,
+        {
+            "enabled",
+            "backend",
+            "reference_path",
+            "model",
+            "device",
+            "labels",
+            "min_track_hits",
+            "pad_px",
+            "min_crop_size",
+            "event_min_consecutive",
+            "event_severity",
+        },
+        "anomaly",
+    )
+    anomaly_enabled = anomaly.get("enabled", False)
+    if not isinstance(anomaly_enabled, bool):
+        raise ConfigError("anomaly.enabled must be true or false")
+    anomaly_backend = anomaly.get("backend", "dinov2")
+    if anomaly_backend != "dinov2":
+        raise ConfigError("anomaly.backend currently supports only 'dinov2'")
+    anomaly_reference = anomaly.get("reference_path")
+    if anomaly_reference is not None and (
+        not isinstance(anomaly_reference, str) or not anomaly_reference.strip()
+    ):
+        raise ConfigError("anomaly.reference_path must be a non-empty string or null")
+    if anomaly_enabled and not anomaly_reference:
+        raise ConfigError("anomaly.reference_path is required when anomaly.enabled is true")
+    anomaly_model = anomaly.get("model", "dinov2_vits14")
+    if not isinstance(anomaly_model, str) or not anomaly_model.strip():
+        raise ConfigError("anomaly.model must be a non-empty string")
+    anomaly_device = anomaly.get("device")
+    if anomaly_device is not None and not isinstance(anomaly_device, (str, int)):
+        raise ConfigError("anomaly.device must be a string, integer, or null")
+    anomaly_config = AnomalyConfig(
+        enabled=anomaly_enabled,
+        reference_path=anomaly_reference,
+        model=anomaly_model,
+        device=anomaly_device,
+        labels=_optional_str_tuple(anomaly.get("labels"), "anomaly.labels"),
+        min_track_hits=_positive_int(
+            anomaly.get("min_track_hits", 3),
+            "anomaly.min_track_hits",
+        ),
+        pad_px=_positive_int(anomaly.get("pad_px", 6), "anomaly.pad_px", minimum=0),
+        min_crop_size=_positive_int(
+            anomaly.get("min_crop_size", 12),
+            "anomaly.min_crop_size",
+        ),
+        event_min_consecutive=_positive_int(
+            anomaly.get("event_min_consecutive", 3),
+            "anomaly.event_min_consecutive",
+        ),
+        event_severity=_severity(
+            anomaly.get("event_severity", "warning"),
+            "anomaly.event_severity",
+        ),
+    )
+
     events = _mapping(data.get("events"), "events")
     _reject_unknown(events, {"dwell"}, "events")
     dwell = _mapping(events.get("dwell"), "events.dwell")
@@ -205,10 +293,12 @@ def parse_production_config(data: dict[str, Any]) -> ProductionConfig:
 
     alerts = _mapping(data.get("alerts"), "alerts")
     _reject_unknown(alerts, {"minimum_severity"}, "alerts")
-    minimum_severity = alerts.get("minimum_severity", "warning")
-    if minimum_severity not in {"info", "warning", "critical"}:
-        raise ConfigError("alerts.minimum_severity must be info, warning, or critical")
-    alert_config = AlertConfig(minimum_severity=minimum_severity)
+    alert_config = AlertConfig(
+        minimum_severity=_severity(
+            alerts.get("minimum_severity", "warning"),
+            "alerts.minimum_severity",
+        )
+    )
 
     runtime = _mapping(data.get("runtime"), "runtime")
     _reject_unknown(runtime, {"sensor_id", "modality"}, "runtime")
@@ -223,6 +313,7 @@ def parse_production_config(data: dict[str, Any]) -> ProductionConfig:
     return ProductionConfig(
         detector=detector_config,
         tracker=tracker_config,
+        anomaly=anomaly_config,
         events=event_config,
         alerts=alert_config,
         runtime=runtime_config,
