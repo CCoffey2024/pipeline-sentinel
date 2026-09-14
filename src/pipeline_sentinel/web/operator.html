@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pipeline Sentinel — Operator Console</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0e12;
+      --panel: #111820;
+      --panel-2: #161f29;
+      --line: #26323e;
+      --text: #e7edf3;
+      --muted: #8e9daa;
+      --accent: #55d6be;
+      --accent-2: #7bb6ff;
+      --warning: #f1bb57;
+      --critical: #ff6b6b;
+      --ok: #68d391;
+      --shadow: 0 18px 50px rgba(0,0,0,.28);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 12% 0%, #13202b 0, var(--bg) 38%); color: var(--text); }
+    button, input, select { font: inherit; }
+    a { color: var(--accent-2); }
+    .shell { width: min(1500px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 48px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 12px 2px 22px; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .mark { width: 42px; height: 42px; border: 1px solid var(--accent); border-radius: 10px; display: grid; place-items: center; color: var(--accent); font-weight: 800; letter-spacing: -.04em; box-shadow: 0 0 24px rgba(85,214,190,.12); }
+    h1 { margin: 0; font-size: 19px; letter-spacing: .02em; }
+    .subtitle { margin-top: 3px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .16em; }
+    .health { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warning); box-shadow: 0 0 12px currentColor; }
+    .dot.ok { background: var(--ok); }
+    .grid { display: grid; grid-template-columns: 390px minmax(0,1fr); gap: 18px; margin-top: 20px; align-items: start; }
+    .stack { display: grid; gap: 18px; }
+    .card { background: linear-gradient(180deg, rgba(22,31,41,.95), rgba(17,24,32,.95)); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+    .card-head { padding: 16px 18px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .card-head h2 { margin: 0; font-size: 14px; letter-spacing: .05em; }
+    .card-body { padding: 18px; }
+    .eyebrow { color: var(--accent); font-size: 10px; letter-spacing: .18em; text-transform: uppercase; margin-bottom: 7px; }
+    label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 7px; }
+    input[type="text"], input[type="file"], select { width: 100%; border: 1px solid var(--line); background: #0d1319; color: var(--text); border-radius: 8px; padding: 10px 11px; outline: none; }
+    input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(85,214,190,.10); }
+    .field { margin-bottom: 14px; }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .button { border: 1px solid #3a5f5b; background: #18332f; color: #dcfff8; padding: 10px 14px; border-radius: 8px; cursor: pointer; font-weight: 650; transition: .15s ease; }
+    .button:hover { transform: translateY(-1px); border-color: var(--accent); }
+    .button.secondary { border-color: var(--line); background: #121b24; color: var(--text); }
+    .button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .button.full { width: 100%; }
+    .hint { margin-top: 10px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .progress { height: 7px; margin-top: 12px; border-radius: 999px; overflow: hidden; background: #0b1015; border: 1px solid var(--line); display: none; }
+    .progress > span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .2s; }
+    .fusion-list { display: grid; gap: 8px; max-height: 230px; overflow: auto; padding-right: 3px; }
+    .fusion-item { display: flex; gap: 9px; align-items: flex-start; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: #0d1319; }
+    .fusion-item small { color: var(--muted); display: block; margin-top: 2px; }
+    .table-wrap { overflow: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { text-align: left; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .12em; font-weight: 700; padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    td { padding: 11px 12px; border-bottom: 1px solid rgba(38,50,62,.65); vertical-align: middle; }
+    tr.job-row { cursor: pointer; }
+    tr.job-row:hover { background: rgba(123,182,255,.05); }
+    tr.job-row.selected { background: rgba(85,214,190,.08); }
+    .badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 4px 8px; border: 1px solid var(--line); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+    .badge.completed { color: var(--ok); border-color: rgba(104,211,145,.35); background: rgba(104,211,145,.08); }
+    .badge.running { color: var(--accent-2); border-color: rgba(123,182,255,.35); background: rgba(123,182,255,.08); }
+    .badge.queued { color: var(--warning); border-color: rgba(241,187,87,.35); background: rgba(241,187,87,.08); }
+    .badge.failed { color: var(--critical); border-color: rgba(255,107,107,.35); background: rgba(255,107,107,.08); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+    .detail-empty { color: var(--muted); padding: 38px 18px; text-align: center; }
+    .summary { display: grid; grid-template-columns: repeat(6, minmax(85px,1fr)); gap: 8px; margin-bottom: 16px; }
+    .metric { border: 1px solid var(--line); background: #0d1319; border-radius: 9px; padding: 11px; }
+    .metric b { display: block; font-size: 20px; margin-top: 4px; }
+    .metric span { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .12em; }
+    .detail-meta { display: flex; gap: 10px 18px; flex-wrap: wrap; color: var(--muted); font-size: 11px; margin-bottom: 14px; }
+    .artifact-list { display: flex; gap: 7px; flex-wrap: wrap; margin: 10px 0 18px; }
+    .artifact { border: 1px solid var(--line); color: var(--text); text-decoration: none; background: #0d1319; border-radius: 7px; padding: 7px 9px; font-size: 11px; }
+    .artifact:hover { border-color: var(--accent-2); }
+    .section-title { margin: 20px 0 8px; font-size: 11px; color: var(--muted); letter-spacing: .14em; text-transform: uppercase; }
+    .alert-row.warning td:first-child { border-left: 3px solid var(--warning); }
+    .alert-row.critical td:first-child { border-left: 3px solid var(--critical); }
+    .alert-row.info td:first-child { border-left: 3px solid var(--accent-2); }
+    video { width: 100%; max-height: 480px; background: #000; border: 1px solid var(--line); border-radius: 9px; }
+    .error { margin-top: 12px; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,107,107,.35); color: #ffc8c8; background: rgba(255,107,107,.08); font-size: 12px; display: none; white-space: pre-wrap; }
+    .notice { margin-top: 18px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .notice strong { color: var(--text); }
+    @media (max-width: 1050px) { .grid { grid-template-columns: 1fr; } .summary { grid-template-columns: repeat(3,1fr); } }
+    @media (max-width: 650px) { .shell { width: min(100% - 18px, 1500px); } header { align-items: flex-start; flex-direction: column; } .field-row, .summary { grid-template-columns: 1fr 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand">
+        <div class="mark">PS</div>
+        <div><h1>Pipeline Sentinel</h1><div class="subtitle">Operator Console</div></div>
+      </div>
+      <div class="health"><span id="health-dot" class="dot"></span><span id="health-text">Connecting…</span> · <a href="/docs" target="_blank">API docs</a></div>
+    </header>
+
+    <div class="grid">
+      <div class="stack">
+        <section class="card">
+          <div class="card-head"><div><div class="eyebrow">Sensor ingest</div><h2>Start Analysis Run</h2></div></div>
+          <div class="card-body">
+            <form id="run-form">
+              <div class="field"><label for="video">EO / IR video</label><input id="video" name="file" type="file" accept="video/*,.mp4,.mov,.avi,.mkv,.m4v" required /></div>
+              <div class="field-row">
+                <div class="field"><label for="modality">Modality</label><select id="modality" name="modality"><option value="EO">EO</option><option value="IR">IR</option><option value="OTHER">Other</option></select></div>
+                <div class="field"><label for="sensor-id">Sensor ID</label><input id="sensor-id" name="sensor_id" type="text" value="EO_CAM_01" required /></div>
+              </div>
+              <button id="run-button" class="button full" type="submit">Start analysis</button>
+              <div id="upload-progress" class="progress"><span></span></div>
+              <div id="run-error" class="error"></div>
+              <div class="hint">The console uploads the selected video into its managed workspace, queues one production run, and preserves the normal Pipeline Sentinel evidence artifacts.</div>
+            </form>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><div><div class="eyebrow">Multisensor</div><h2>Fuse Completed Runs</h2></div></div>
+          <div class="card-body">
+            <div id="fusion-list" class="fusion-list"><div class="hint">No completed sensor runs yet.</div></div>
+            <button id="fusion-button" class="button full" style="margin-top:12px" disabled>Fuse selected runs</button>
+            <div id="fusion-error" class="error"></div>
+            <div class="hint">Select at least two completed runs with distinct sensor IDs. Fusion uses the packaged temporal-consensus policy.</div>
+          </div>
+        </section>
+
+        <div class="notice"><strong>v0.10 security posture:</strong> this console is designed for a local workstation and binds to loopback by default. It has no user authentication. Remote binding requires an explicit server flag.</div>
+      </div>
+
+      <div class="stack">
+        <section class="card">
+          <div class="card-head"><div><div class="eyebrow">Execution</div><h2>Job Queue</h2></div><button id="refresh-button" class="button secondary">Refresh</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Status</th><th>Type</th><th>Input / Fusion</th><th>Sensor</th><th>Created</th><th>Result</th></tr></thead><tbody id="jobs-body"><tr><td colspan="6" class="detail-empty">No jobs yet.</td></tr></tbody></table></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><div><div class="eyebrow">Evidence</div><h2>Selected Job</h2></div></div>
+          <div id="detail" class="card-body"><div class="detail-empty">Select a job to inspect status, artifacts, alerts, and annotated video.</div></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const state = { jobs: [], selected: null, polling: null };
+  const $ = (id) => document.getElementById(id);
+  const escapeHtml = (v) => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+  const shortTime = (iso) => iso ? new Date(iso).toLocaleString() : '—';
+  const fmt = (n) => Number(n ?? 0).toLocaleString();
+
+  async function jsonFetch(url, options={}) {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      let detail = `${response.status} ${response.statusText}`;
+      try { const payload = await response.json(); detail = payload.detail || detail; } catch (_) {}
+      throw new Error(detail);
+    }
+    return response.json();
+  }
+
+  async function refreshHealth() {
+    try {
+      const h = await jsonFetch('/api/health');
+      $('health-dot').classList.add('ok');
+      $('health-text').textContent = `v${h.version} · ${h.active_jobs} active`;
+    } catch (err) {
+      $('health-dot').classList.remove('ok');
+      $('health-text').textContent = 'Service unavailable';
+    }
+  }
+
+  function resultText(job) {
+    if (job.status === 'failed') return job.error?.message || 'Failed';
+    if (job.status !== 'completed') return '—';
+    const s = job.summary || {};
+    if (job.kind === 'fusion') return `${fmt(s.events)} fused events · ${fmt(s.alerts)} alerts`;
+    return `${fmt(s.detections)} det · ${fmt(s.events)} events · ${fmt(s.alerts)} alerts`;
+  }
+
+  function renderJobs() {
+    const body = $('jobs-body');
+    if (!state.jobs.length) {
+      body.innerHTML = '<tr><td colspan="6" class="detail-empty">No jobs yet.</td></tr>';
+      return;
+    }
+    body.innerHTML = state.jobs.map(job => `
+      <tr class="job-row ${state.selected === job.job_id ? 'selected' : ''}" data-job="${escapeHtml(job.job_id)}">
+        <td><span class="badge ${escapeHtml(job.status)}">${escapeHtml(job.status)}</span></td>
+        <td>${escapeHtml(job.kind)}</td>
+        <td><div>${escapeHtml(job.display_name)}</div><div class="mono" style="color:var(--muted)">${escapeHtml(job.job_id)}</div></td>
+        <td>${job.kind === 'run' ? `${escapeHtml(job.modality)} · ${escapeHtml(job.sensor_id)}` : `${fmt((job.source_job_ids || []).length)} runs`}</td>
+        <td>${escapeHtml(shortTime(job.created_at_utc))}</td>
+        <td>${escapeHtml(resultText(job))}</td>
+      </tr>`).join('');
+    body.querySelectorAll('.job-row').forEach(row => row.addEventListener('click', () => selectJob(row.dataset.job)));
+  }
+
+  function renderFusionChoices() {
+    const completed = state.jobs.filter(j => j.kind === 'run' && j.status === 'completed');
+    const box = $('fusion-list');
+    if (!completed.length) {
+      box.innerHTML = '<div class="hint">No completed sensor runs yet.</div>';
+      $('fusion-button').disabled = true;
+      return;
+    }
+    box.innerHTML = completed.map(job => `
+      <label class="fusion-item">
+        <input type="checkbox" value="${escapeHtml(job.job_id)}" />
+        <span><strong>${escapeHtml(job.modality)} · ${escapeHtml(job.sensor_id)}</strong><small>${escapeHtml(job.display_name)} · ${escapeHtml(shortTime(job.completed_at_utc))}</small></span>
+      </label>`).join('');
+    box.querySelectorAll('input').forEach(input => input.addEventListener('change', updateFusionButton));
+    updateFusionButton();
+  }
+
+  function updateFusionButton() {
+    const selected = [...$('fusion-list').querySelectorAll('input:checked')];
+    $('fusion-button').disabled = selected.length < 2;
+  }
+
+  async function refreshJobs({keepDetail=true}={}) {
+    try {
+      state.jobs = await jsonFetch('/api/jobs?limit=150');
+      if (state.selected && !state.jobs.some(j => j.job_id === state.selected)) state.selected = null;
+      renderJobs();
+      renderFusionChoices();
+      if (keepDetail && state.selected) await renderDetail(state.selected, false);
+    } catch (err) { console.error(err); }
+  }
+
+  async function selectJob(jobId) {
+    state.selected = jobId;
+    renderJobs();
+    await renderDetail(jobId, true);
+  }
+
+  function metric(label, value) { return `<div class="metric"><span>${escapeHtml(label)}</span><b>${fmt(value)}</b></div>`; }
+
+  async function renderDetail(jobId, scroll=true) {
+    const job = state.jobs.find(j => j.job_id === jobId) || await jsonFetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+    if (!job) return;
+    const s = job.summary || {};
+    const metrics = job.kind === 'run'
+      ? metric('Frames', s.frames) + metric('Detections', s.detections) + metric('Tracks', s.tracks) + metric('Anomalies', s.anomalies) + metric('Events', s.events) + metric('Alerts', s.alerts)
+      : metric('Sensors', s.sensors) + metric('Input events', s.input_events) + metric('Fused events', s.events) + metric('Alerts', s.alerts);
+
+    let html = `<div class="summary">${metrics}</div>
+      <div class="detail-meta"><span><b>Status:</b> ${escapeHtml(job.status)}</span><span><b>Created:</b> ${escapeHtml(shortTime(job.created_at_utc))}</span>${job.started_at_utc ? `<span><b>Started:</b> ${escapeHtml(shortTime(job.started_at_utc))}</span>` : ''}${job.completed_at_utc ? `<span><b>Finished:</b> ${escapeHtml(shortTime(job.completed_at_utc))}</span>` : ''}</div>`;
+
+    if (job.error) html += `<div class="error" style="display:block"><b>${escapeHtml(job.error.type)}</b>: ${escapeHtml(job.error.message)}</div>`;
+    if (job.status === 'queued' || job.status === 'running') html += '<div class="hint">This job is active. The console will refresh automatically.</div>';
+
+    if (job.status === 'completed') {
+      try {
+        const artifactPayload = await jsonFetch(`/api/jobs/${encodeURIComponent(jobId)}/artifacts`);
+        const artifacts = artifactPayload.artifacts || {};
+        html += '<div class="section-title">Artifacts</div><div class="artifact-list">' + Object.entries(artifacts).map(([name, item]) => `<a class="artifact" href="${escapeHtml(item.url)}" target="_blank">${escapeHtml(name)}</a>`).join('') + '</div>';
+        if (artifacts.annotated_video) html += `<div class="section-title">Annotated video</div><video controls preload="metadata" src="${escapeHtml(artifacts.annotated_video.url)}"></video><div class="hint">Browser playback depends on the installed codec. The artifact link above remains available if the browser cannot decode the MP4.</div>`;
+      } catch (err) { html += `<div class="hint">Artifacts unavailable: ${escapeHtml(err.message)}</div>`; }
+
+      try {
+        const alerts = await jsonFetch(`/api/jobs/${encodeURIComponent(jobId)}/alerts?limit=200`);
+        html += '<div class="section-title">Alerts</div>';
+        if (!alerts.length) html += '<div class="hint">No human-facing alerts were emitted by this job.</div>';
+        else html += `<div class="table-wrap"><table><thead><tr><th>Severity</th><th>Time</th><th>Type</th><th>Label</th><th>Message</th></tr></thead><tbody>${alerts.slice().reverse().map(a => `<tr class="alert-row ${escapeHtml(a.severity)}"><td>${escapeHtml(a.severity)}</td><td>${Number(a.timestamp_s ?? 0).toFixed(2)}s</td><td>${escapeHtml(a.alert_type)}</td><td>${escapeHtml(a.label || '—')}</td><td>${escapeHtml(a.message)}</td></tr>`).join('')}</tbody></table></div>`;
+      } catch (err) { html += `<div class="hint">Alert evidence unavailable: ${escapeHtml(err.message)}</div>`; }
+    }
+
+    $('detail').innerHTML = html;
+    if (scroll) $('detail').scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+
+  $('modality').addEventListener('change', () => {
+    const mod = $('modality').value;
+    const current = $('sensor-id').value;
+    if (/^(EO|IR|OTHER)_CAM_01$/.test(current)) $('sensor-id').value = `${mod}_CAM_01`;
+  });
+
+  $('run-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const file = $('video').files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append('file', file);
+    form.append('sensor_id', $('sensor-id').value.trim());
+    form.append('modality', $('modality').value);
+    const error = $('run-error');
+    const progress = $('upload-progress');
+    const bar = progress.querySelector('span');
+    error.style.display = 'none';
+    progress.style.display = 'block';
+    bar.style.width = '0%';
+    $('run-button').disabled = true;
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/jobs/run');
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) bar.style.width = `${Math.min(100, (e.loaded/e.total)*100)}%`; };
+    xhr.onload = async () => {
+      $('run-button').disabled = false;
+      if (xhr.status >= 200 && xhr.status < 300) {
+        bar.style.width = '100%';
+        const job = JSON.parse(xhr.responseText);
+        $('video').value = '';
+        await refreshJobs({keepDetail:false});
+        await selectJob(job.job_id);
+        setTimeout(() => { progress.style.display = 'none'; }, 700);
+      } else {
+        let message = `${xhr.status} ${xhr.statusText}`;
+        try { message = JSON.parse(xhr.responseText).detail || message; } catch (_) {}
+        error.textContent = message; error.style.display = 'block'; progress.style.display = 'none';
+      }
+    };
+    xhr.onerror = () => { $('run-button').disabled = false; error.textContent = 'Upload failed'; error.style.display = 'block'; progress.style.display = 'none'; };
+    xhr.send(form);
+  });
+
+  $('fusion-button').addEventListener('click', async () => {
+    const ids = [...$('fusion-list').querySelectorAll('input:checked')].map(x => x.value);
+    const error = $('fusion-error');
+    error.style.display = 'none';
+    $('fusion-button').disabled = true;
+    try {
+      const job = await jsonFetch('/api/jobs/fusion', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({job_ids:ids})});
+      await refreshJobs({keepDetail:false});
+      await selectJob(job.job_id);
+    } catch (err) { error.textContent = err.message; error.style.display = 'block'; }
+    updateFusionButton();
+  });
+
+  $('refresh-button').addEventListener('click', () => refreshJobs());
+
+  async function poll() { await Promise.all([refreshHealth(), refreshJobs()]); }
+  poll();
+  state.polling = setInterval(poll, 2500);
+</script>
+</body>
+</html>

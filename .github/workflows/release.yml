@@ -54,6 +54,8 @@ jobs:
           .release-test/bin/pipeline-sentinel --version | grep "${VERSION}"
           .release-test/bin/python -m pipeline_sentinel --version | grep "${VERSION}"
           .release-test/bin/pipeline-sentinel-fit-reference --help > /dev/null
+          .release-test/bin/pipeline-sentinel-operator --help > /dev/null
+          .release-test/bin/python -c "from pathlib import Path; import pipeline_sentinel; assert (Path(pipeline_sentinel.__file__).parent / 'web' / 'operator.html').is_file()"
           .release-test/bin/python -c "from pipeline_sentinel.config import load_production_config; c, _ = load_production_config(); assert c.detector.imgsz == 960 and c.anomaly.enabled is False"
           .release-test/bin/python -c "from pipeline_sentinel.fusion import load_fusion_config; c, _ = load_fusion_config(); assert c.strategy == 'temporal_consensus' and c.min_sensors == 2"
 
