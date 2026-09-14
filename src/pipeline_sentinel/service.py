@@ -17,6 +17,7 @@ from . import __version__
 from .image_sources import IMAGE_SUFFIXES, LocalSourceType, inspect_local_source
 from .operator_jobs import safe_upload_name, validate_video_suffix
 from .operator_local_sources import LocalSourceOperatorJobManager
+from .operator_results import build_operator_results_router
 
 DEFAULT_MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -125,6 +126,7 @@ def create_app(
     app.state.job_manager = manager
     app.state.workspace = resolved_workspace
     app.state.allow_local_sources = allow_local_sources
+    app.include_router(build_operator_results_router(manager))
 
     @app.get("/", response_class=HTMLResponse)
     def operator_console() -> HTMLResponse:
