@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pipeline-sentinel"
-version = "0.6.0"
+dynamic = ["version"]
 description = "A modular computer-vision application for ingest, detection, tracking, event generation, and human-facing alerts."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,6 +23,10 @@ yolo = [
   "ultralytics-opencv-headless>=8.4.147,<9",
 ]
 
+[project.urls]
+Repository = "https://github.com/CCoffey2024/pipeline-sentinel"
+Issues = "https://github.com/CCoffey2024/pipeline-sentinel/issues"
+
 [dependency-groups]
 dev = [
   "pytest>=8.3",
@@ -31,6 +35,9 @@ dev = [
 
 [project.scripts]
 pipeline-sentinel = "pipeline_sentinel.cli:main"
+
+[tool.hatch.version]
+path = "src/pipeline_sentinel/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pipeline_sentinel"]
