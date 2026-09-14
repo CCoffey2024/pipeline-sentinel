@@ -48,6 +48,7 @@ install dev environment
     -> pytest
     -> build wheel
     -> clean-install wheel with [operator]
+    -> verify Ultralytics is not installed by [operator]
     -> smoke-test installed operator CLI and API routes
 ```
 
@@ -83,7 +84,8 @@ Pushing the tag starts `.github/workflows/release.yml`. Before creating the GitH
 5. installs the core wheel into a clean environment;
 6. verifies package/CLI versions and bundled configuration/UI assets;
 7. clean-installs the same wheel with `[operator]`;
-8. verifies the installed operator command and primary operator API routes.
+8. verifies that the operator install does not pull in Ultralytics;
+9. verifies the installed operator command and primary operator API routes.
 
 Only after those gates pass does the workflow create the GitHub Release and attach the distribution
 artifacts. A failed gate leaves no new release.
@@ -113,7 +115,7 @@ Get-FileHash .\pipeline_sentinel-0.12.0-py3-none-any.whl -Algorithm SHA256
 Get-Content .\SHA256SUMS.txt
 ```
 
-Create an isolated environment and install the operator MVP:
+Create an isolated environment and install the Apache-licensed operator shell:
 
 ```powershell
 py -m venv .venv
@@ -126,8 +128,18 @@ pipeline-sentinel-operator --version
 pipeline-sentinel-operator --open-browser
 ```
 
-The core wheel intentionally does not install the optional learned detector runtime. A CLI-only
-machine can install the core wheel or the `yolo` extra instead:
+The `operator` extra intentionally excludes the optional Ultralytics runtime. To run the current YOLO
+production profile, opt in separately:
+
+```powershell
+python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator,yolo]"
+```
+
+The optional Ultralytics runtime and model weights retain their upstream license terms and are not
+covered by Pipeline Sentinel's Apache-2.0 license. See `THIRD_PARTY_NOTICES.md`.
+
+The core wheel also intentionally does not install learned detector runtimes. A CLI-only machine can
+install the core wheel or the `yolo` extra instead:
 
 ```powershell
 python -m pip install .\pipeline_sentinel-0.12.0-py3-none-any.whl
