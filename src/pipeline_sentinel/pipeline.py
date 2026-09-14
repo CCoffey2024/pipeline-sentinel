@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import zlib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from itertools import chain
@@ -96,6 +97,20 @@ ALERT_COLUMNS = [
     "metadata",
 ]
 
+# High-contrast, color-blind-conscious palette based on the Okabe-Ito family.
+# Values are BGR because OpenCV drawing functions use BGR channel order.
+_RENDER_PALETTE_BGR: tuple[tuple[int, int, int], ...] = (
+    (0, 159, 230),    # orange
+    (233, 180, 86),   # sky blue
+    (115, 158, 0),    # bluish green
+    (66, 228, 240),   # yellow
+    (178, 114, 0),    # blue
+    (0, 94, 213),     # vermillion
+    (167, 121, 204),  # reddish purple
+    (255, 194, 0),    # cyan accent
+)
+_LABEL_BACKGROUND_BGR = (12, 16, 20)
+
 
 @dataclass(frozen=True, slots=True)
 class RunArtifacts:
@@ -106,6 +121,71 @@ class RunArtifacts:
     events_csv: Path
     alerts_csv: Path
     run_manifest: Path
+
+
+def _class_color(label: str) -> tuple[int, int, int]:
+    """Return a stable display color for one semantic class label."""
+
+    key = (label or "unknown").strip().lower().encode("utf-8")
+    index = zlib.crc32(key) % len(_RENDER_PALETTE_BGR)
+    return _RENDER_PALETTE_BGR[index]
+
+
+def _draw_track_annotation(
+    image: Any,
+    track: Track,
+    *,
+    is_alert: bool,
+    is_anomaly: bool,
+) -> None:
+    """Draw one track with a stable class color and readable caption."""
+
+    x1, y1, x2, y2 = track.xyxy
+    color = _class_color(track.label)
+    thickness = 3 if (is_alert or is_anomaly) else 2
+    cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
+
+    suffixes: list[str] = []
+    if is_alert:
+        suffixes.append("ALERT")
+    if is_anomaly:
+        suffixes.append("ANOM")
+    suffix = f" {' '.join(suffixes)}" if suffixes else ""
+    text = f"#{track.track_id} {track.label} {track.confidence:.2f}{suffix}"
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.45
+    text_thickness = 1
+    (text_width, text_height), baseline = cv2.getTextSize(
+        text,
+        font,
+        font_scale,
+        text_thickness,
+    )
+    image_height, image_width = image.shape[:2]
+    text_x = max(0, min(x1, max(0, image_width - text_width - 6)))
+    text_y = y1 - 6
+    if text_y - text_height - 4 < 0:
+        text_y = y1 + text_height + 8
+    text_y = max(text_height + 4, min(text_y, max(text_height + 4, image_height - baseline - 2)))
+
+    cv2.rectangle(
+        image,
+        (text_x, max(0, text_y - text_height - 4)),
+        (min(image_width - 1, text_x + text_width + 6), min(image_height - 1, text_y + baseline + 2)),
+        _LABEL_BACKGROUND_BGR,
+        cv2.FILLED,
+    )
+    cv2.putText(
+        image,
+        text,
+        (text_x + 3, text_y),
+        font,
+        font_scale,
+        color,
+        text_thickness,
+        cv2.LINE_AA,
+    )
 
 
 def _detection_row(detection: Detection, frame: FrameContext) -> dict[str, object]:
@@ -367,23 +447,11 @@ class PipelineSentinel:
 
                 rendered = frame.image.copy()
                 for track in tracks:
-                    x1, y1, x2, y2 = track.xyxy
-                    is_alert = track.track_id in alert_track_ids
-                    is_anomaly = track.track_id in anomalous_track_ids
-                    box_value = (255, 255, 255) if is_alert else (180, 180, 180)
-                    thickness = 3 if (is_alert or is_anomaly) else 2
-                    cv2.rectangle(rendered, (x1, y1), (x2, y2), box_value, thickness)
-                    suffix = " ANOM" if is_anomaly else ""
-                    text = f"#{track.track_id} {track.label} {track.confidence:.2f}{suffix}"
-                    cv2.putText(
+                    _draw_track_annotation(
                         rendered,
-                        text,
-                        (x1, max(15, y1 - 6)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.45,
-                        box_value,
-                        1,
-                        cv2.LINE_AA,
+                        track,
+                        is_alert=track.track_id in alert_track_ids,
+                        is_anomaly=track.track_id in anomalous_track_ids,
                     )
 
                 video_writer.write(rendered)
