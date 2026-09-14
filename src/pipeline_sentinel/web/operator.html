@@ -223,13 +223,32 @@
     $('fusion-button').disabled = selected.length < 2;
   }
 
+  function detailRevision(job) {
+    if (!job) return null;
+    return JSON.stringify({
+      status: job.status,
+      started_at_utc: job.started_at_utc,
+      completed_at_utc: job.completed_at_utc,
+      summary: job.summary || {},
+      error: job.error || null,
+    });
+  }
+
   async function refreshJobs({keepDetail=true}={}) {
     try {
+      const previousSelected = state.selected
+        ? state.jobs.find(job => job.job_id === state.selected) || null
+        : null;
       state.jobs = await jsonFetch('/api/jobs?limit=150');
       if (state.selected && !state.jobs.some(j => j.job_id === state.selected)) state.selected = null;
       renderJobs();
       renderFusionChoices();
-      if (keepDetail && state.selected) await renderDetail(state.selected, false);
+      if (keepDetail && state.selected) {
+        const selectedJob = state.jobs.find(job => job.job_id === state.selected) || null;
+        const active = selectedJob && (selectedJob.status === 'queued' || selectedJob.status === 'running');
+        const changed = detailRevision(previousSelected) !== detailRevision(selectedJob);
+        if (!previousSelected || active || changed) await renderDetail(state.selected, false);
+      }
     } catch (err) { console.error(err); }
   }
 
