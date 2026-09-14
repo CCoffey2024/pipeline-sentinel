@@ -134,7 +134,12 @@ def create_app(
         if not page.is_file():
             raise HTTPException(status_code=500, detail="bundled operator console is missing")
         html = page.read_text(encoding="utf-8")
-        html = html.replace("</body>", '<script src="/local-sources.js"></script>\n</body>')
+        html = html.replace(
+            "</body>",
+            '<script src="/local-sources.js"></script>\n'
+            '<script src="/results-console.js"></script>\n'
+            "</body>",
+        )
         return HTMLResponse(html)
 
     @app.get("/local-sources.js")
@@ -142,6 +147,13 @@ def create_app(
         script = Path(__file__).with_name("web") / "local-sources.js"
         if not script.is_file():
             raise HTTPException(status_code=500, detail="bundled local-source UI is missing")
+        return FileResponse(script, media_type="text/javascript")
+
+    @app.get("/results-console.js")
+    def results_console_javascript() -> FileResponse:
+        script = Path(__file__).with_name("web") / "results-console.js"
+        if not script.is_file():
+            raise HTTPException(status_code=500, detail="bundled results console is missing")
         return FileResponse(script, media_type="text/javascript")
 
     @app.get("/api/health")
