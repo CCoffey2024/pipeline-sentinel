@@ -6,34 +6,112 @@ human-facing alerts.
 
 The project began as a sequence of learning/R&D notebooks. Stable ideas are promoted into an
 installable Python package behind explicit contracts so source adapters, model runtimes, trackers,
-representation models, fusion policies, and alert logic can change independently.
+representation models, fusion policies, delivery layers, and alert logic can change independently.
 
 > **Scope:** defensive sensing, detection, tracking, anomaly scoring, sensor fusion, and analyst
 > alerting for a fictional pipeline corridor. No automated engagement or weapons logic.
 
-## Current development milestone — v0.9
+## Current development milestone — v0.10
 
 ```text
-v0.1  ingest + data contracts
-v0.2  optional YOLO detector adapter
-v0.3  generic frame streams + VisDrone source
-v0.4  repeatable detector evaluation
-v0.5  tracking -> events -> alert policy
-v0.6  config-driven production runs + provenance
-v0.7  wheel/sdist release engineering
-v0.8  DINOv2-backed anomaly-scoring boundary
-v0.9  EO/IR semantic-event late fusion
+v0.1   ingest + data contracts
+v0.2   optional YOLO detector adapter
+v0.3   generic frame streams + VisDrone source
+v0.4   repeatable detector evaluation
+v0.5   tracking -> events -> alert policy
+v0.6   config-driven production runs + provenance
+v0.7   wheel/sdist release engineering
+v0.8   DINOv2-backed anomaly-scoring boundary
+v0.9   EO/IR semantic-event late fusion
+v0.10  local service/API + operator-facing web console
 ```
 
-The semantic rule is now:
+The semantic rule remains:
 
 ```text
 detection != track != anomaly observation != event != alert
 ```
 
-A model saying “person here” is not the same thing as establishing temporal identity, deciding an
-appearance is unusual, inferring a semantic condition, corroborating that condition with another
-sensor, or deciding that an operator should be notified.
+The application-delivery rule is now equally important:
+
+```text
+UI != analytics
+API != analytics
+job orchestration != analytics
+```
+
+The browser console and HTTP service consume the same production APIs and evidence artifacts as the
+CLI rather than creating a second implementation of the vision pipeline.
+
+## Operator console
+
+For the first time, Pipeline Sentinel can be driven as an operator application instead of as a set of
+CLI commands.
+
+From a source checkout on Windows, double-click:
+
+```text
+start-operator.cmd
+```
+
+The launcher synchronizes the operator dependencies, starts the local service, and opens the browser.
+The equivalent command is:
+
+```powershell
+uv sync --extra operator --group dev
+uv run pipeline-sentinel-operator --open-browser
+```
+
+The default console is:
+
+```text
+http://127.0.0.1:8765/
+```
+
+From the UI an operator can:
+
+- choose an EO, IR, or other video;
+- assign a sensor ID and modality;
+- start a production analysis run with one button;
+- watch queued/running/completed/failed jobs;
+- inspect summary counts and alerts;
+- open/download evidence artifacts and annotated video;
+- select completed sensor runs and start EO/IR late fusion.
+
+The default operator workspace is:
+
+```text
+outputs/operator/
+├── jobs/              persisted job state
+├── uploads/           browser-uploaded source video
+├── runtime-configs/   job-specific validated runtime identity
+├── runs/              production-run evidence
+└── fusions/           multisensor fusion evidence
+```
+
+The v0.10 service is deliberately local-first. It binds to loopback by default and has no
+authentication or multi-user security model. A non-loopback bind is refused unless `--allow-remote`
+is explicitly supplied. Do not expose this version directly to an untrusted network.
+
+See `docs/operator-console.md`.
+
+## Install a release artifact
+
+Core package:
+
+```powershell
+python -m pip install .\pipeline_sentinel-0.10.0-py3-none-any.whl
+```
+
+Operator application, including the local web service and YOLO runtime:
+
+```powershell
+python -m pip install ".\pipeline_sentinel-0.10.0-py3-none-any.whl[operator]"
+pipeline-sentinel-operator --open-browser
+```
+
+DINOv2 remains a separate optional extra because anomaly scoring is disabled in the shipped
+production profile until a fitted normal-reference artifact is supplied.
 
 ## Single-sensor runtime
 
@@ -64,14 +142,11 @@ FrameContext
 Runtime components communicate through Pipeline Sentinel contracts rather than Ultralytics results,
 Torch tensors, OpenCV handles, or other provider-specific objects.
 
-## Production run
+## Production run from the CLI
 
-From a source checkout:
+The CLI remains useful for automation and development:
 
 ```powershell
-git clone https://github.com/CCoffey2024/pipeline-sentinel.git
-cd pipeline-sentinel
-
 uv sync --extra yolo --group dev
 uv run pipeline-sentinel validate-config .\config\production.yaml
 
@@ -79,13 +154,7 @@ uv run pipeline-sentinel run .\input.mp4 `
   --config .\config\production.yaml
 ```
 
-If `--output` is omitted, a unique directory is created under:
-
-```text
-outputs/runs/<UTC-timestamp>-<short-id>/
-```
-
-A completed run contains:
+A completed production run contains:
 
 ```text
 annotated_video.mp4
@@ -109,7 +178,7 @@ See `docs/production-run.md`.
 
 ## Notebook 06 -> anomaly scoring
 
-v0.8 extracted the reusable idea from the DINOv2 notebook without welding the application to DINOv2:
+v0.8 extracted the reusable DINOv2 notebook idea without welding the application to DINOv2:
 
 ```text
 track crop -> Embedder -> vector -> normal-reference scorer -> AnomalyObservation
@@ -130,17 +199,14 @@ uv run pipeline-sentinel-fit-reference `
   --quantile 0.95
 ```
 
-The baseline preserves the Notebook 06 method: cosine distance from a normal centroid with a threshold
-fitted from the normal-score quantile. One high score is evidence, not an alert;
-`ConsecutiveAnomalyEventDetector` can require repeated anomalous observations before emitting a
-`visual_anomaly` event.
+One high anomaly score remains evidence rather than an alert. Persistence rules can convert repeated
+anomaly evidence into a `visual_anomaly` event before alert policy is applied.
 
 See `docs/anomaly-scoring.md`.
 
 ## Notebook 07 -> EO/IR late fusion
 
-v0.9 promotes the stable late-fusion concept while making real-sensor assumptions explicit.
-Independent EO and IR runs are processed normally first:
+v0.9 promotes semantic-event late fusion while making real-sensor assumptions explicit:
 
 ```text
 EO run -> Event[] ----+
@@ -150,13 +216,7 @@ IR run -> Event[] ----+--> TemporalConsensusFuser --> fused Event[] --> AlertPol
 other sensor Event[] -+
 ```
 
-Validate the fusion profile:
-
-```powershell
-uv run pipeline-sentinel validate-fusion-config .\config\fusion.yaml
-```
-
-Fuse two or more completed runs:
+The CLI fusion path remains available:
 
 ```powershell
 uv run pipeline-sentinel fuse-runs `
@@ -165,7 +225,7 @@ uv run pipeline-sentinel fuse-runs `
   --config .\config\fusion.yaml
 ```
 
-A fusion run produces:
+Fusion produces:
 
 ```text
 fusion_events.csv
@@ -177,13 +237,32 @@ effective_fusion_config.json
 
 The default strategy requires matching event types from distinct sensors within a configured time
 window. Label agreement is configurable. Pixel-space IoU is optional and must only be enabled when
-the source products are known to be registered into a common geometry.
+the source products are registered into a common geometry.
 
-Fused confidence is deliberately left unset in v0.9 because independent EO/IR model confidences and
-anomaly scores are not assumed to be calibrated onto the same probability scale. Original values are
-retained in `fusion_contributors.csv`.
+Fused confidence remains unset because independent EO/IR detector confidence and anomaly evidence are
+not assumed to be calibrated onto one probability scale. Original values remain available in
+`fusion_contributors.csv`.
 
 See `docs/sensor-fusion.md`.
+
+## Operator API
+
+The web console uses the same documented HTTP API available at `/docs`:
+
+```text
+GET  /api/health
+GET  /api/jobs
+GET  /api/jobs/{job_id}
+POST /api/jobs/run
+POST /api/jobs/fusion
+GET  /api/jobs/{job_id}/alerts
+GET  /api/jobs/{job_id}/events
+GET  /api/jobs/{job_id}/artifacts
+GET  /api/jobs/{job_id}/artifacts/{artifact_name}
+```
+
+The default worker count is one. This protects a workstation from accidentally starting several
+GPU-heavy model stacks concurrently merely because an operator clicked a button several times.
 
 ## Deterministic acceptance
 
@@ -198,8 +277,8 @@ uv run pipeline-sentinel demo --output outputs\demo
 
 CI does not download detector weights, DINOv2 weights, or benchmark datasets. It tests contracts,
 configuration, source adapters, detector normalization, tracking, anomaly scoring, event generation,
-fusion, policy behavior, operational artifacts, release metadata, package building, and clean-wheel
-installation with deterministic fixtures.
+fusion, operator-job orchestration, HTTP routes, policy behavior, operational artifacts, release
+metadata, package building, and clean-wheel installation with deterministic fixtures.
 
 ## Runtime contracts
 
@@ -212,23 +291,6 @@ installation with deterministic fixtures.
 - `Alert` — human-facing notification promoted from an event by policy.
 
 See `docs/architecture.md`.
-
-## Lower-level YOLO development command
-
-The config-driven `run` command is the application-facing entry point. `run-yolo` remains available
-for explicit experiments:
-
-```powershell
-uv run pipeline-sentinel run-yolo .\input.mp4 `
-  --output outputs\yolo `
-  --model yolo26n.pt `
-  --conf 0.25 `
-  --imgsz 960 `
-  --device cpu
-```
-
-YOLO detections are tracked by default. Without an enabled event detector, semantic event and alert
-artifacts remain valid and empty rather than silently treating detections as mission events.
 
 ## VisDrone aerial validation
 
@@ -260,10 +322,7 @@ match/exclusion artifacts. It is explicitly not presented as the official VisDro
 
 Versioned tags drive a release workflow that validates metadata, runs lint/tests, builds the wheel and
 source distribution, generates SHA-256 checksums, installs the wheel into a clean environment,
-smoke-tests packaged configuration/CLIs, and only then creates a GitHub Release.
-
-The first tagged production package is `v0.7.0`; later development milestones retain the same release
-gates.
+smoke-tests packaged configuration/CLIs/UI assets, and only then creates a GitHub Release.
 
 See `docs/release.md`.
 
@@ -279,12 +338,14 @@ pipeline-sentinel/
 ├── notebooks/learning/      preserved R&D / instructional work
 ├── outputs/                 generated artifacts; ignored
 ├── scripts/                 developer/release/reference utilities
-├── src/pipeline_sentinel/   shipped application package
+├── src/pipeline_sentinel/   shipped analytics + service package
+├── start-operator.cmd       Windows source-checkout launcher
 └── tests/                   deterministic automated tests
 ```
 
 Useful documentation:
 
+- `docs/operator-console.md` — local service, UI, job workspace, API, and security boundary.
 - `docs/architecture.md` — runtime boundaries and contracts.
 - `docs/production-run.md` — config-driven single-sensor execution and provenance.
 - `docs/anomaly-scoring.md` — normal-reference and DINOv2 adapter boundary.
@@ -296,10 +357,10 @@ Useful documentation:
 
 ## Development direction
 
-The notebook-derived analytical layers are now largely represented in the runtime. The next major
-step should be application delivery rather than another dataset or model experiment: stabilize v0.9,
-then add a small service/API boundary and operator-facing presentation on top of the same evidence
-contracts.
+The notebook-derived analytical layers and first delivery layer are now represented in the package.
+The next work should focus on hardening the operator experience: retention controls, richer run
+inspection, browser-compatible video delivery, deployment packaging, authentication before any remote
+use, and eventually a desktop wrapper if one-click workstation launch is worth formalizing.
 
 ## External runtime licensing
 
