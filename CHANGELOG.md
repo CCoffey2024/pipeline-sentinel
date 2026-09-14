@@ -9,14 +9,25 @@ All notable changes to Pipeline Sentinel are documented here. Versions use seman
 - a single Sensor Ingest control surface for browser media uploads and read-in-place local folders/datasets;
 - request-wide upload size enforcement for multi-image submissions;
 - deterministic service tests covering unified video ingest, uploaded image sequences, mixed-media rejection, and the refactored operator controls;
-- an explicit MVP release-readiness/acceptance checklist for external workstation testing.
+- an explicit MVP release-readiness/acceptance checklist for external workstation testing;
+- interactive completed-run results console with Overview, Detections, Tracks, Anomalies, Events / Alerts, and Downloads views;
+- class summaries, detection-density visualization, run-storage reporting, and safe **Delete run & files** cleanup;
+- codec-safe annotated-frame browser for evidence review when Chrome cannot decode the generated MP4 codec;
+- codec-safe playback controls including Play/Pause, previous/next frame, speed controls, loop, scrubber, and timestamps;
+- deterministic high-contrast per-class annotation colors with dark caption backing for easier human review;
+- `TESTER-QUICKSTART.md` for packaged external workstation testing.
 
 ### Changed
 - package version advanced to `0.12.0`;
 - EO/IR/OTHER modality and sensor identity are now shared ingest metadata rather than being presented as video-specific controls;
 - large image collections continue to use read-in-place local source adapters while small image sequences can be selected directly in the browser;
 - the legacy `/api/jobs/run` encoded-video endpoint remains available for backward compatibility while the operator console uses `/api/jobs/media`;
-- CI/release acceptance is hardened around the shipped operator package and Windows workstation target.
+- completed job detail views remain stable while background queue polling continues, preventing result-tab and playback resets;
+- annotated review now uses stable class colors rather than gray/white track boxes and labels;
+- Pipeline Sentinel itself is Apache-2.0 licensed while the Ultralytics YOLO provider is an explicit optional extra with separate upstream terms;
+- the `operator` extra no longer installs Ultralytics automatically; external acceptance testing opts into `[operator,yolo]` explicitly;
+- CI/release acceptance is hardened around the shipped operator package and Windows workstation target;
+- v0.12.0 entered feature freeze after successful real-media acceptance runs; only release-blocking fixes and shipment documentation remain before tagging.
 
 ## [0.11.0] - 2026-09-13
 
