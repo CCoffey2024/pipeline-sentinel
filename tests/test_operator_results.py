@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 from fastapi.testclient import TestClient
 
+import pipeline_sentinel.service as service_module
 from pipeline_sentinel.operator_jobs import OperatorJob
 from pipeline_sentinel.service import create_app
 
@@ -111,6 +113,55 @@ def test_operator_results_summary_and_tables(tmp_path: Path) -> None:
         assert script.status_code == 200
         assert "Delete run & files" in script.text
         assert "Detections by class" in script.text
+        assert "Browse annotated frames (codec-safe)" in script.text
+        assert "state.resultTabs" in script.text
+
+        page = client.get("/")
+        assert page.status_code == 200
+        assert "detailRevision" in page.text
+        assert "if (!previousSelected || active || changed) await renderDetail" in page.text
+
+
+def test_annotated_frame_preview_is_codec_independent(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(workspace=tmp_path / "operator")
+    job, _ = _completed_job(app, tmp_path)
+
+    class FakeCapture:
+        def __init__(self) -> None:
+            self.frame = 0
+
+        def isOpened(self) -> bool:  # noqa: N802 - mirror OpenCV API
+            return True
+
+        def get(self, prop: int) -> float:
+            if prop == service_module.cv2.CAP_PROP_FRAME_COUNT:
+                return 3.0
+            return 0.0
+
+        def set(self, prop: int, value: float) -> bool:
+            if prop == service_module.cv2.CAP_PROP_POS_FRAMES:
+                self.frame = int(value)
+            return True
+
+        def read(self):
+            image = np.full((8, 8, 3), self.frame * 20, dtype=np.uint8)
+            return True, image
+
+        def release(self) -> None:
+            return None
+
+    monkeypatch.setattr(service_module.cv2, "VideoCapture", lambda _: FakeCapture())
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/jobs/{job.job_id}/preview-frame?frame=2")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/jpeg"
+        assert response.headers["x-frame-index"] == "2"
+        assert response.headers["x-frame-count"] == "3"
+        assert response.content.startswith(b"\xff\xd8")
+
+        outside = client.get(f"/api/jobs/{job.job_id}/preview-frame?frame=3")
+        assert outside.status_code == 400
 
 
 def test_delete_job_preserves_read_in_place_source(tmp_path: Path) -> None:
