@@ -2,7 +2,8 @@
 
 Pipeline Sentinel releases are tag-driven GitHub releases built from the same commit that carries the
 package version. The release workflow does not publish to PyPI; the MVP distribution is an auditable
-GitHub Release containing a wheel, source archive, and SHA-256 checksum manifest.
+GitHub Release containing a wheel, source archive, SHA-256 checksum manifest, tester quick-start, and
+license notices.
 
 ## Version source of truth
 
@@ -55,6 +56,15 @@ install dev environment
 This means the primary MVP workstation platform and the candidate distribution are exercised before
 merge rather than discovering packaging problems only after a release tag exists.
 
+## v0.12.0 feature freeze
+
+The v0.12.0 testing MVP is feature-frozen after successful real-media acceptance of encoded video,
+small uploaded image sequences, larger read-in-place image folders, interactive results, codec-safe
+annotated playback, safe run deletion, and stable class-colored annotations.
+
+Before the tag is cut, only release-blocking defect fixes, documentation corrections, and packaging
+corrections should enter the release branch. New capabilities belong in the next development version.
+
 ## Creating a release
 
 Do not tag a commit until CI on `main` is green and the version/changelog for that commit are final.
@@ -85,7 +95,8 @@ Pushing the tag starts `.github/workflows/release.yml`. Before creating the GitH
 6. verifies package/CLI versions and bundled configuration/UI assets;
 7. clean-installs the same wheel with `[operator]`;
 8. verifies that the operator install does not pull in Ultralytics;
-9. verifies the installed operator command and primary operator API routes.
+9. verifies the installed operator command and primary operator API routes;
+10. verifies the external tester quick-start and license-notice files exist before shipment.
 
 Only after those gates pass does the workflow create the GitHub Release and attach the distribution
 artifacts. A failed gate leaves no new release.
@@ -100,6 +111,9 @@ A successful v0.12 release contains files similar to:
 pipeline_sentinel-0.12.0-py3-none-any.whl
 pipeline_sentinel-0.12.0.tar.gz
 SHA256SUMS.txt
+TESTER-QUICKSTART.md
+LICENSE
+THIRD_PARTY_NOTICES.md
 ```
 
 Model weights, datasets, output runs, and notebook-generated data are deliberately not release
@@ -115,10 +129,11 @@ Get-FileHash .\pipeline_sentinel-0.12.0-py3-none-any.whl -Algorithm SHA256
 Get-Content .\SHA256SUMS.txt
 ```
 
-Create an isolated environment and install the Apache-licensed operator shell:
+Python 3.12 on 64-bit Windows is the primary tested external-MVP target. Create an isolated environment
+and install the Apache-licensed operator shell:
 
 ```powershell
-py -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator]"
@@ -147,6 +162,9 @@ python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[yolo]"
 ```
 
 Model weights are external runtime assets and are not included in the wheel.
+
+External testers should start with `TESTER-QUICKSTART.md`, which documents the expected operator flow,
+codec-safe playback fallback, clean shutdown, and feedback fields to capture.
 
 ## MVP acceptance after installation
 
