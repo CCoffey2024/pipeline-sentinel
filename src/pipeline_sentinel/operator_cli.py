@@ -50,7 +50,7 @@ def main() -> int:
     args = _parser().parse_args()
     try:
         from .service import run_server
-    except ModuleNotFoundError as exc:
+    except ModuleNotFoundError:
         print(
             "ERROR: operator service dependencies are not installed. "
             "Install Pipeline Sentinel with the 'operator' extra.",
