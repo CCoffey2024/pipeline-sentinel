@@ -11,6 +11,8 @@ def test_bundled_production_config_is_valid() -> None:
     assert config.detector.backend == "yolo"
     assert config.detector.imgsz == 960
     assert config.tracker.backend == "iou"
+    assert config.anomaly.enabled is False
+    assert config.anomaly.backend == "dinov2"
     assert config.events.dwell.enabled is False
     assert provenance.path.name == "production.yaml"
     assert len(provenance.sha256) == 64
@@ -30,6 +32,18 @@ tracker:
   backend: iou
   iou_threshold: 0.25
   max_missed_updates: 3
+anomaly:
+  enabled: true
+  backend: dinov2
+  reference_path: refs/normal.npz
+  model: dinov2_vits14
+  device: cpu
+  labels: [person]
+  min_track_hits: 4
+  pad_px: 8
+  min_crop_size: 16
+  event_min_consecutive: 2
+  event_severity: warning
 events:
   dwell:
     enabled: true
@@ -50,6 +64,10 @@ runtime:
     assert config.detector.model == "yolo26n.pt"
     assert config.detector.imgsz == 960
     assert config.tracker.max_missed_updates == 3
+    assert config.anomaly.enabled is True
+    assert config.anomaly.reference_path == "refs/normal.npz"
+    assert config.anomaly.labels == ("person",)
+    assert config.anomaly.event_min_consecutive == 2
     assert config.events.dwell.enabled is True
     assert config.events.dwell.labels == ("person",)
     assert config.runtime.sensor_id == "EO_TEST"
@@ -70,4 +88,12 @@ def test_config_rejects_invalid_probability(tmp_path: Path) -> None:
     config_path.write_text("detector:\n  confidence: 1.5\n", encoding="utf-8")
 
     with pytest.raises(ConfigError, match="between 0 and 1"):
+        load_production_config(config_path)
+
+
+def test_enabled_anomaly_requires_reference_path(tmp_path: Path) -> None:
+    config_path = tmp_path / "bad.yaml"
+    config_path.write_text("anomaly:\n  enabled: true\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="reference_path is required"):
         load_production_config(config_path)
