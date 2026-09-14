@@ -10,13 +10,14 @@ replaced without rewriting the rest of the system.
 > **Scope:** defensive sensing, detection, tracking, anomaly scoring, sensor fusion, and human-facing
 > alerts for a fictional pipeline corridor. No automated engagement or weapons logic.
 
-## v0.6 milestone — config-driven, auditable production runs
+## v0.7 milestone — releasable production package
 
 v0.1 established ingest and data contracts. v0.2 added the optional YOLO detector adapter. v0.3 made
 VisDrone image sequences a repeatable aerial source. v0.4 added detector-quality evaluation. v0.5
-added tracking, events, and alert policy. **v0.6 turns that runtime into a production-style execution
-path** with validated configuration, run IDs, structured lifecycle logging, config snapshots, and
-failure status artifacts.
+added tracking, events, and alert policy. v0.6 added config-driven, auditable production runs.
+**v0.7 adds release engineering:** one version source of truth, reproducible wheel/sdist builds,
+checksum manifests, clean-install smoke tests, retained CI distributions, and tag-driven GitHub
+Releases.
 
 The application flow remains:
 
@@ -41,9 +42,30 @@ detection != track != event != alert
 A model saying “person here” is not the same thing as establishing that the same person persists over
 time, inferring a temporal condition, or deciding that a human operator should be notified.
 
+## Install a release artifact
+
+Versioned releases are distributed through GitHub Releases as a wheel, source distribution, and
+`SHA256SUMS.txt`. After downloading the wheel for a release, install it into an isolated environment:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install ".\pipeline_sentinel-0.7.0-py3-none-any.whl[yolo]"
+
+pipeline-sentinel --version
+python -m pipeline_sentinel --version
+```
+
+The `yolo` extra installs the optional learned detector runtime. Core package installation without
+that extra remains useful for configuration, artifacts, tests, and non-YOLO integrations.
+
+See `docs/release.md` for checksum verification, release gates, tagging, and rollback policy.
+
 ## First production-style run
 
-Install the optional learned runtime, validate the checked-in production profile, then run one video:
+From a source checkout, install the optional learned runtime, validate the checked-in production
+profile, then run one video:
 
 ```powershell
 git clone https://github.com/CCoffey2024/pipeline-sentinel.git
@@ -92,8 +114,10 @@ See `docs/production-run.md` for the runtime contract and provenance details.
 
 ```powershell
 uv sync --group dev
+uv run python scripts/check_release_version.py
 uv run ruff check .
 uv run pytest
+uv build
 uv run pipeline-sentinel demo --output outputs\demo
 ```
 
@@ -283,9 +307,9 @@ excluded-label evidence under `<run_dir>/benchmark/`.
 The shared COCO/VisDrone ontology is explicit in the benchmark layer; runtime adapters preserve their
 native labels.
 
-## Testing philosophy
+## Testing and release philosophy
 
-Pipeline Sentinel separates software correctness from model quality.
+Pipeline Sentinel separates software correctness, release integrity, and model quality.
 
 ```text
 unit / synthetic tests
@@ -293,6 +317,9 @@ unit / synthetic tests
 
 end-to-end deterministic demo
     -> does the complete application pipeline work?
+
+wheel/sdist + clean-install smoke test
+    -> is the software actually distributable?
 
 real YOLO + local aerial data
     -> does the optional runtime execute correctly?
@@ -303,22 +330,22 @@ benchmark evaluator
 
 CI does not download model weights or benchmark datasets. It tests configuration validation, source
 adapters, detector normalization, tracking, event generation, policy behavior, production lifecycle
-artifacts, and orchestration with deterministic fixtures.
+artifacts, release metadata, packaging, and orchestration with deterministic fixtures.
 
-See `docs/testing.md`.
+See `docs/testing.md` and `docs/release.md`.
 
 ## Repository map
 
 ```text
 pipeline-sentinel/
-├── .github/workflows/       CI
+├── .github/workflows/       CI and tag-driven releases
 ├── benchmarks/              evaluation definitions and documentation
 ├── config/                  version-controlled defaults and production profile
 ├── data/                    local staging; large data ignored
 ├── docs/                    architecture, migration, testing, operational notes
 ├── notebooks/learning/      preserved R&D / instructional work
 ├── outputs/                 generated artifacts; ignored
-├── scripts/                 developer / preparation utilities
+├── scripts/                 developer, release, and preparation utilities
 ├── src/pipeline_sentinel/   shipped application package
 └── tests/                   deterministic automated tests
 ```
@@ -327,6 +354,7 @@ Useful documentation:
 
 - `docs/architecture.md` — runtime boundaries and contracts.
 - `docs/production-run.md` — config-driven execution, logging, and provenance.
+- `docs/release.md` — release gates, installation, checksums, and rollback.
 - `docs/migration-plan.md` — notebook-to-application extraction map.
 - `docs/testing.md` — CI and workstation acceptance.
 - `docs/yolo-adapter.md` — learned detector adapter mechanics.
@@ -338,12 +366,11 @@ Useful documentation:
 The project is no longer adding datasets merely to broaden the benchmark list. New data should be
 added only when it answers a concrete engineering or mission question.
 
-The next application-oriented milestones are:
+With the first production packaging/release path in place, the next application milestones are:
 
 1. extract the Notebook 06 embedder/anomaly-scoring boundary where it adds runtime value;
 2. add EO/IR evidence fusion behind stable contracts;
-3. build wheel/sdist release artifacts and a versioned release workflow;
-4. add a service/API or operator UI only after the CLI/runtime contracts remain stable through those
+3. add a service/API or operator UI only after the CLI/runtime contracts remain stable through those
    additions.
 
 ## External runtime licensing

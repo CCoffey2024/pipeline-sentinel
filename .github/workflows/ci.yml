@@ -16,15 +16,30 @@ jobs:
         run: python -m pip install uv
       - name: Install project
         run: uv sync --group dev
+      - name: Validate release metadata
+        run: uv run python scripts/check_release_version.py
       - name: Lint
         run: uv run ruff check .
       - name: Test
         run: uv run pytest
       - name: Build wheel and source distribution
         run: uv build
+      - name: Generate checksums
+        run: uv run python scripts/generate_checksums.py dist
       - name: Smoke test built wheel
         run: |
           python -m venv .wheel-test
           .wheel-test/bin/python -m pip install dist/*.whl
           .wheel-test/bin/pipeline-sentinel --version
+          .wheel-test/bin/python -m pipeline_sentinel --version
           .wheel-test/bin/python -c "from pipeline_sentinel.config import load_production_config; c, _ = load_production_config(); assert c.detector.imgsz == 960"
+      - name: Upload candidate distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-sentinel-dist-${{ github.sha }}
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
