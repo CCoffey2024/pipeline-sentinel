@@ -2,6 +2,23 @@
 
 All notable changes to Pipeline Sentinel are documented here. Versions use semantic versioning.
 
+## [0.11.0] - 2026-09-13
+
+### Added
+- read-in-place local image-folder input in the operator console;
+- native VisDrone sequence selection from existing local dataset roots without MP4 conversion;
+- first-class UAVDT `UAV-benchmark-M` sequence discovery and frame streaming;
+- operator APIs for local-source inspection and image-sequence run submission;
+- local-source UI controls for sequence, modality, sensor ID, working FPS, frame step, and optional frame cap;
+- deterministic tests for generic image folders, UAVDT discovery, local-source API behavior, and remote-mode filesystem protections.
+
+### Changed
+- package version advanced to `0.11.0`;
+- local image datasets are treated as immutable external inputs and are not copied into the operator workspace;
+- `PipelineSentinel.run_frames()` writes detection, track, anomaly, event, and alert CSV rows incrementally instead of retaining complete run tables in RAM;
+- production orchestration now supports any lazy `FrameContext` stream with the same config/provenance lifecycle used by encoded video;
+- local filesystem source APIs are automatically disabled when the operator service is bound beyond loopback.
+
 ## [0.10.0] - 2026-09-13
 
 ### Added
