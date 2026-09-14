@@ -2,6 +2,14 @@
 
 All notable changes to Pipeline Sentinel are documented here. Versions use semantic versioning.
 
+## [Unreleased]
+
+### Fixed
+- mixed-resolution still-image sequences are now normalized to the first frame's canvas with
+  aspect-preserving letterboxing before detection, tracking, annotation, and evidence-video writing;
+- run manifests record the normalization policy, canonical canvas, observed source dimensions, and
+  normalized-frame count.
+
 ## [0.12.0] - 2026-09-14
 
 ### Added

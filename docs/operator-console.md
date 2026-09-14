@@ -83,7 +83,9 @@ Supported still-image extensions are:
 A browser submission is one logical run. Do not mix video and image files in the same submission.
 Selected still images are copied into one managed upload directory and processed as an ordered image
 sequence using natural filename ordering. The working FPS supplies runtime timestamps for generic
-still images.
+still images. If selected frames have different resolutions or orientations, the first frame defines
+the run canvas and later frames are scaled and letterboxed without cropping or distortion before
+detection, tracking, annotation, and evidence-video encoding.
 
 Browser-selected media is copied because browsers provide file bytes rather than a trusted local
 server-side path.
@@ -192,7 +194,8 @@ Local-source inspection reads directory metadata only. A local-sequence job acce
 path, sequence ID, sensor identity, modality, working FPS, frame step, and optional frame cap.
 
 The generated run manifest records `imagery_access=read_in_place`, `imagery_copied=false`, source root,
-sequence ID, and sampling controls for read-in-place sources.
+sequence ID, and sampling controls for read-in-place sources. Its `frame_normalization` metadata also
+records the canonical canvas, observed source dimensions, and number of frames normalized.
 
 ## Job and interactive evidence workflow
 

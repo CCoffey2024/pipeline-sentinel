@@ -30,6 +30,15 @@ class ObservationOnlyDetector:
         ]
 
 
+class RecordingDetector(ObservationOnlyDetector):
+    def __init__(self) -> None:
+        self.frame_shapes: list[tuple[int, ...]] = []
+
+    def detect(self, frame: FrameContext) -> list[Detection]:
+        self.frame_shapes.append(frame.image.shape)
+        return super().detect(frame)
+
+
 def test_end_to_end_reference_demo(tmp_path: Path) -> None:
     artifacts = run_demo(tmp_path / "demo", frame_count=120, size=(320, 180))
 
@@ -125,3 +134,37 @@ def test_pipeline_accepts_image_sequence_frames(tmp_path: Path) -> None:
     assert manifest["first_frame_number"] == 10
     assert manifest["last_frame_number"] == 12
     assert manifest["metadata"]["dataset"] == "fixture"
+
+
+def test_pipeline_normalizes_mixed_frame_sizes_before_detection(tmp_path: Path) -> None:
+    frames = [
+        FrameContext(
+            frame_number=0,
+            timestamp_s=0.0,
+            image=np.zeros((48, 64, 3), dtype=np.uint8),
+            source_path=Path("portraitish.jpg"),
+        ),
+        FrameContext(
+            frame_number=1,
+            timestamp_s=1.0,
+            image=np.zeros((32, 96, 3), dtype=np.uint8),
+            source_path=Path("landscape.jpg"),
+        ),
+    ]
+    detector = RecordingDetector()
+
+    artifacts = PipelineSentinel(detector).run_frames(
+        frames,
+        tmp_path / "mixed-size-sequence",
+        render_fps=1.0,
+    )
+
+    manifest = json.loads(artifacts.run_manifest.read_text(encoding="utf-8"))
+    normalization = manifest["metadata"]["frame_normalization"]
+    assert detector.frame_shapes == [(48, 64, 3), (48, 64, 3)]
+    assert manifest["frames_processed"] == 2
+    assert normalization["policy"] == "letterbox_to_first_frame"
+    assert normalization["canonical_width"] == 64
+    assert normalization["canonical_height"] == 48
+    assert normalization["normalized_frames"] == 1
+    assert normalization["source_dimensions"] == {"64x48": 1, "96x32": 1}

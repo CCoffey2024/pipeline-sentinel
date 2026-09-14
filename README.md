@@ -75,6 +75,7 @@ http://127.0.0.1:8765/
 From the UI an operator can:
 
 - select one supported encoded video or one-or-more still-image frames;
+- mix still-image resolutions and orientations using automatic aspect-preserving letterboxing;
 - point at a large local image folder and read it in place;
 - use native VisDrone or UAVDT image-sequence layouts;
 - assign a sensor ID and EO, IR, or OTHER modality independently of file type;
