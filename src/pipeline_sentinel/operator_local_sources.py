@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from contextlib import suppress
 from pathlib import Path
 
 from .image_sources import LocalSourceType, open_local_sequence
@@ -27,10 +28,8 @@ class LocalSourceOperatorJobManager(OperatorJobManager):
         total = 0
         for candidate in path.rglob("*"):
             if candidate.is_file():
-                try:
+                with suppress(OSError):
                     total += candidate.stat().st_size
-                except OSError:
-                    pass
         return total
 
     def delete_job(self, job_id: str) -> dict[str, object]:
