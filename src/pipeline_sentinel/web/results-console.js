@@ -33,9 +33,18 @@
     .download-grid { display:flex; flex-wrap:wrap; gap:8px; }
     .download-grid .artifact { display:inline-flex; flex-direction:column; gap:2px; min-width:130px; }
     .download-grid .artifact small { color:var(--muted); font-size:9px; }
+    .frame-preview { margin-top:10px; border:1px solid var(--line); border-radius:9px; background:#0d1319; overflow:hidden; }
+    .frame-preview summary { cursor:pointer; padding:10px 12px; color:var(--text); font-size:11px; user-select:none; }
+    .frame-preview-body { padding:0 10px 10px; }
+    .frame-preview img { display:block; width:100%; max-height:480px; object-fit:contain; background:#000; border:1px solid var(--line); border-radius:8px; }
+    .frame-preview-controls { display:flex; align-items:center; gap:10px; margin-top:9px; }
+    .frame-preview-controls input[type="range"] { flex:1; }
+    .frame-preview-label { min-width:78px; text-align:right; color:var(--muted); font-size:10px; font-variant-numeric:tabular-nums; }
     @media (max-width: 850px) { .result-grid { grid-template-columns:1fr; } }
   `;
   document.head.appendChild(style);
+
+  state.resultTabs = state.resultTabs || {};
 
   const formatBytes = (bytes) => {
     const value = Number(bytes || 0);
@@ -178,13 +187,25 @@
       html += `<div class="result-actions"><div>${storage ? `<span class="storage-pill" title="Generated output + managed input + job metadata">Run storage: ${formatBytes(storage.total_bytes)}</span>` : ''}<div class="result-note">${escapeHtml(sourceNote)}</div></div><button id="delete-job-button" class="button danger" type="button">Delete run & files</button></div>`;
     }
 
+    let activeTab = null;
+    let previewBase = null;
     if (job.status === 'completed') {
-      if (artifacts.annotated_video) html += `<div class="section-title">Annotated video</div><video controls preload="metadata" src="${escapeHtml(artifacts.annotated_video.url)}"></video><div class="hint">Browser playback depends on the installed codec. The Downloads tab always exposes the original artifact.</div>`;
+      if (artifacts.annotated_video) {
+        const frameCount = Math.max(1, Number(s.frames || 1));
+        previewBase = `/api/jobs/${encodeURIComponent(job.job_id)}/preview-frame`;
+        html += `<div class="section-title">Annotated video</div><video id="annotated-video" controls preload="metadata" poster="${escapeHtml(previewBase)}?frame=0" src="${escapeHtml(artifacts.annotated_video.url)}"></video><div id="annotated-video-hint" class="hint">Browser playback depends on the installed codec. If playback is unavailable, use the codec-safe annotated frame browser below or download the MP4.</div><details id="frame-preview-details" class="frame-preview"><summary>Browse annotated frames (codec-safe)</summary><div class="frame-preview-body"><img id="annotated-frame-preview" src="${escapeHtml(previewBase)}?frame=0" alt="Annotated frame preview" /><div class="frame-preview-controls"><input id="frame-preview-slider" type="range" min="0" max="${frameCount - 1}" value="0" step="1" /><span id="frame-preview-label" class="frame-preview-label">1 / ${frameCount}</span></div><div class="result-note">This JPEG frame browser uses Pipeline Sentinel's own decoder, so it works even when Chrome cannot play the MP4 codec.</div></div></details>`;
+      }
 
       const tabs = job.kind === 'run'
         ? [['overview','Overview'],['detections','Detections'],['tracks','Tracks'],['anomalies','Anomalies'],['events','Events / Alerts'],['downloads','Downloads']]
         : [['overview','Overview'],['events','Events / Alerts'],['downloads','Downloads']];
-      html += `<div class="section-title">Interactive results</div><div class="result-tabs">${tabs.map(([id,label], index) => `<button class="result-tab ${index === 0 ? 'active' : ''}" type="button" data-result-tab="${id}">${label}</button>`).join('')}</div><div id="result-panel" class="result-panel">${results ? overviewHtml(results) : '<div class="result-empty">Result summary unavailable; raw downloads remain available.</div>'}</div>`;
+      const rememberedTab = state.resultTabs[job.job_id] || 'overview';
+      activeTab = tabs.some(([id]) => id === rememberedTab) ? rememberedTab : 'overview';
+      state.resultTabs[job.job_id] = activeTab;
+      const initialPanel = activeTab === 'overview'
+        ? (results ? overviewHtml(results) : '<div class="result-empty">Result summary unavailable; raw downloads remain available.</div>')
+        : '<div class="result-empty">Loading…</div>';
+      html += `<div class="section-title">Interactive results</div><div class="result-tabs">${tabs.map(([id,label]) => `<button class="result-tab ${id === activeTab ? 'active' : ''}" type="button" data-result-tab="${id}">${label}</button>`).join('')}</div><div id="result-panel" class="result-panel">${initialPanel}</div>`;
     }
 
     $('detail').innerHTML = html;
@@ -201,6 +222,7 @@
         deleteButton.textContent = 'Deleting…';
         try {
           const deleted = await jsonFetch(`/api/jobs/${encodeURIComponent(job.job_id)}`, {method:'DELETE'});
+          delete state.resultTabs[job.job_id];
           state.selected = null;
           await refreshJobs({keepDetail:false});
           $('detail').innerHTML = `<div class="detail-empty">Deleted run and freed ${escapeHtml(formatBytes(deleted.freed_bytes))}. Select another job or start a new analysis.</div>`;
@@ -213,9 +235,49 @@
     }
 
     document.querySelectorAll('.result-tab').forEach(button => button.addEventListener('click', async () => {
+      state.resultTabs[job.job_id] = button.dataset.resultTab;
       document.querySelectorAll('.result-tab').forEach(item => item.classList.toggle('active', item === button));
       await loadTab(job, button.dataset.resultTab, results, artifacts);
     }));
+
+    if (activeTab && activeTab !== 'overview') await loadTab(job, activeTab, results, artifacts);
+
+    const slider = document.getElementById('frame-preview-slider');
+    const previewImage = document.getElementById('annotated-frame-preview');
+    const previewLabel = document.getElementById('frame-preview-label');
+    if (slider && previewImage && previewLabel && previewBase) {
+      let previewTimer = null;
+      const updateLabel = () => {
+        const index = Number(slider.value || 0);
+        const total = Number(slider.max || 0) + 1;
+        previewLabel.textContent = `${index + 1} / ${total}`;
+      };
+      const updateImage = () => {
+        const index = Number(slider.value || 0);
+        previewImage.src = `${previewBase}?frame=${index}`;
+      };
+      slider.addEventListener('input', () => {
+        updateLabel();
+        if (previewTimer) clearTimeout(previewTimer);
+        previewTimer = setTimeout(updateImage, 120);
+      });
+      slider.addEventListener('change', () => {
+        if (previewTimer) clearTimeout(previewTimer);
+        updateLabel();
+        updateImage();
+      });
+    }
+
+    const video = document.getElementById('annotated-video');
+    const framePreview = document.getElementById('frame-preview-details');
+    const videoHint = document.getElementById('annotated-video-hint');
+    if (video && framePreview) {
+      video.addEventListener('error', () => {
+        video.style.display = 'none';
+        framePreview.open = true;
+        if (videoHint) videoHint.textContent = 'Chrome could not decode this MP4. The annotated frame browser below remains fully usable, and the original artifact is still available in Downloads.';
+      });
+    }
 
     if (scroll) $('detail').scrollIntoView({behavior:'smooth', block:'nearest'});
   };
