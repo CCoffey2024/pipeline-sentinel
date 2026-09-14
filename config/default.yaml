@@ -1,6 +1,6 @@
 project:
   name: pipeline-sentinel
-  version: 0.7.0
+  version: 0.8.0
 
 ingest:
   sample_every_n: 2
@@ -23,6 +23,19 @@ tracking:
   iou_threshold: 0.30
   max_missed_updates: 2
 
+anomaly:
+  enabled: false
+  backend: dinov2
+  reference_path: null
+  model: dinov2_vits14
+  device: null
+  labels: null
+  min_track_hits: 3
+  pad_px: 6
+  min_crop_size: 12
+  event_min_consecutive: 3
+  event_severity: warning
+
 events:
   dwell:
     enabled: false
@@ -38,6 +51,7 @@ output:
   annotated_video: true
   detections_csv: true
   tracks_csv: true
+  anomalies_csv: true
   events_csv: true
   alerts_csv: true
   run_manifest: true
