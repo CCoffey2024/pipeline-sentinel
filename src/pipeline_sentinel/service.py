@@ -12,7 +12,8 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .operator_jobs import OperatorJobManager
+from .image_sources import LocalSourceType, inspect_local_source
+from .operator_local_sources import LocalSourceOperatorJobManager
 
 DEFAULT_MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -20,6 +21,22 @@ _LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 class FusionRequest(BaseModel):
     job_ids: list[str] = Field(min_length=2)
+
+
+class LocalSourceInspectRequest(BaseModel):
+    source_type: LocalSourceType
+    path: str = Field(min_length=1)
+
+
+class LocalSequenceRunRequest(BaseModel):
+    source_type: LocalSourceType
+    path: str = Field(min_length=1)
+    sequence_id: str | None = None
+    sensor_id: str = Field(min_length=1)
+    modality: Literal["EO", "IR", "OTHER"] = "EO"
+    frame_step: int = Field(default=1, ge=1)
+    max_frames: int | None = Field(default=None, ge=1)
+    fps: float = Field(default=30.0, gt=0)
 
 
 def _http_error(exc: Exception) -> HTTPException:
@@ -37,13 +54,14 @@ def create_app(
     workspace: Path = Path("outputs/operator"),
     max_workers: int = 1,
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
+    allow_local_sources: bool = True,
 ) -> FastAPI:
     """Create the local Pipeline Sentinel operator API and bundled web console."""
 
     if max_upload_bytes < 1:
         raise ValueError("max_upload_bytes must be positive")
     resolved_workspace = Path(workspace).expanduser().resolve()
-    manager = OperatorJobManager(resolved_workspace, max_workers=max_workers)
+    manager = LocalSourceOperatorJobManager(resolved_workspace, max_workers=max_workers)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -60,13 +78,23 @@ def create_app(
     )
     app.state.job_manager = manager
     app.state.workspace = resolved_workspace
+    app.state.allow_local_sources = allow_local_sources
 
     @app.get("/", response_class=HTMLResponse)
     def operator_console() -> HTMLResponse:
         page = Path(__file__).with_name("web") / "operator.html"
         if not page.is_file():
             raise HTTPException(status_code=500, detail="bundled operator console is missing")
-        return HTMLResponse(page.read_text(encoding="utf-8"))
+        html = page.read_text(encoding="utf-8")
+        html = html.replace("</body>", '<script src="/local-sources.js"></script>\n</body>')
+        return HTMLResponse(html)
+
+    @app.get("/local-sources.js")
+    def local_sources_javascript() -> FileResponse:
+        script = Path(__file__).with_name("web") / "local-sources.js"
+        if not script.is_file():
+            raise HTTPException(status_code=500, detail="bundled local-source UI is missing")
+        return FileResponse(script, media_type="text/javascript")
 
     @app.get("/api/health")
     def health() -> dict[str, object]:
@@ -80,6 +108,7 @@ def create_app(
             "jobs_known": len(jobs),
             "max_workers": max_workers,
             "max_upload_bytes": max_upload_bytes,
+            "local_sources_enabled": allow_local_sources,
         }
 
     @app.get("/api/jobs")
@@ -132,6 +161,40 @@ def create_app(
             raise _http_error(exc) from exc
         finally:
             await file.close()
+
+    @app.post("/api/local-sources/inspect")
+    def inspect_source(request: LocalSourceInspectRequest) -> dict[str, object]:
+        if not allow_local_sources:
+            raise HTTPException(
+                status_code=403,
+                detail="read-in-place local sources are disabled when the service is remotely bound",
+            )
+        try:
+            return inspect_local_source(request.source_type, Path(request.path))
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @app.post("/api/jobs/local-sequence", status_code=202)
+    def submit_local_sequence(request: LocalSequenceRunRequest) -> dict[str, object]:
+        if not allow_local_sources:
+            raise HTTPException(
+                status_code=403,
+                detail="read-in-place local sources are disabled when the service is remotely bound",
+            )
+        try:
+            job = manager.submit_local_sequence(
+                source_type=request.source_type,
+                source_root=Path(request.path),
+                sequence_id=request.sequence_id,
+                sensor_id=request.sensor_id,
+                modality=request.modality,
+                frame_step=request.frame_step,
+                max_frames=request.max_frames,
+                render_fps=request.fps,
+            )
+            return job.to_dict()
+        except Exception as exc:
+            raise _http_error(exc) from exc
 
     @app.post("/api/jobs/fusion", status_code=202)
     def submit_fusion(request: FusionRequest) -> dict[str, object]:
@@ -209,7 +272,7 @@ def run_server(
         raise ValueError("max_upload_gib must be positive")
     if host not in _LOCAL_HOSTS and not allow_remote:
         raise ValueError(
-            "refusing non-local bind without --allow-remote; the v0.10 operator console has no authentication"
+            "refusing non-local bind without --allow-remote; the operator console has no authentication"
         )
 
     try:
@@ -224,6 +287,7 @@ def run_server(
         workspace=workspace,
         max_workers=max_workers,
         max_upload_bytes=max_upload_bytes,
+        allow_local_sources=host in _LOCAL_HOSTS,
     )
     browser_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     url = f"http://{browser_host}:{port}/"
