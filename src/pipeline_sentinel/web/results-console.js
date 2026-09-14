@@ -37,14 +37,24 @@
     .frame-preview summary { cursor:pointer; padding:10px 12px; color:var(--text); font-size:11px; user-select:none; }
     .frame-preview-body { padding:0 10px 10px; }
     .frame-preview img { display:block; width:100%; max-height:480px; object-fit:contain; background:#000; border:1px solid var(--line); border-radius:8px; }
+    .frame-player-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px; }
+    .frame-player-button { border:1px solid var(--line); background:#121b24; color:var(--text); border-radius:7px; padding:7px 10px; cursor:pointer; font-size:11px; min-height:32px; }
+    .frame-player-button:hover { border-color:var(--accent-2); }
+    .frame-player-button.primary { border-color:#3a5f5b; background:#18332f; color:#dcfff8; min-width:68px; }
+    .frame-player-button.primary:hover { border-color:var(--accent); }
+    .frame-player-field { display:inline-flex; align-items:center; gap:6px; color:var(--muted); font-size:10px; margin:0; }
+    .frame-player-field select { width:auto; min-width:72px; padding:6px 8px; border-radius:7px; font-size:11px; }
+    .frame-player-field input[type="checkbox"] { margin:0; }
+    .frame-preview-time { margin-left:auto; color:var(--text); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; }
     .frame-preview-controls { display:flex; align-items:center; gap:10px; margin-top:9px; }
     .frame-preview-controls input[type="range"] { flex:1; }
     .frame-preview-label { min-width:78px; text-align:right; color:var(--muted); font-size:10px; font-variant-numeric:tabular-nums; }
-    @media (max-width: 850px) { .result-grid { grid-template-columns:1fr; } }
+    @media (max-width: 850px) { .result-grid { grid-template-columns:1fr; } .frame-preview-time { width:100%; margin-left:0; } }
   `;
   document.head.appendChild(style);
 
   state.resultTabs = state.resultTabs || {};
+  state.framePreviewStop = state.framePreviewStop || null;
 
   const formatBytes = (bytes) => {
     const value = Number(bytes || 0);
@@ -59,6 +69,17 @@
   const numberOrDash = (value, digits=2) => {
     const n = Number(value);
     return Number.isFinite(n) ? n.toFixed(digits) : '—';
+  };
+
+  const formatTimestamp = (seconds) => {
+    const totalMs = Math.max(0, Math.round((Number(seconds) || 0) * 1000));
+    const hours = Math.floor(totalMs / 3600000);
+    const minutes = Math.floor((totalMs % 3600000) / 60000);
+    const wholeSeconds = Math.floor((totalMs % 60000) / 1000);
+    const millis = totalMs % 1000;
+    const hh = hours ? `${hours}:` : '';
+    const mm = hours ? String(minutes).padStart(2, '0') : String(minutes);
+    return `${hh}${mm}:${String(wholeSeconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
   };
 
   function classBars(classes, kind='run') {
@@ -155,6 +176,11 @@
   }
 
   renderDetail = async function(jobId, scroll=true) {
+    if (state.framePreviewStop) {
+      state.framePreviewStop();
+      state.framePreviewStop = null;
+    }
+
     const job = state.jobs.find(j => j.job_id === jobId) || await jsonFetch(`/api/jobs/${encodeURIComponent(jobId)}`);
     if (!job) return;
     const s = job.summary || {};
@@ -189,11 +215,20 @@
 
     let activeTab = null;
     let previewBase = null;
+    let previewFps = 30;
     if (job.status === 'completed') {
       if (artifacts.annotated_video) {
         const frameCount = Math.max(1, Number(s.frames || 1));
         previewBase = `/api/jobs/${encodeURIComponent(job.job_id)}/preview-frame`;
-        html += `<div class="section-title">Annotated video</div><video id="annotated-video" controls preload="metadata" poster="${escapeHtml(previewBase)}?frame=0" src="${escapeHtml(artifacts.annotated_video.url)}"></video><div id="annotated-video-hint" class="hint">Browser playback depends on the installed codec. If playback is unavailable, use the codec-safe annotated frame browser below or download the MP4.</div><details id="frame-preview-details" class="frame-preview"><summary>Browse annotated frames (codec-safe)</summary><div class="frame-preview-body"><img id="annotated-frame-preview" src="${escapeHtml(previewBase)}?frame=0" alt="Annotated frame preview" /><div class="frame-preview-controls"><input id="frame-preview-slider" type="range" min="0" max="${frameCount - 1}" value="0" step="1" /><span id="frame-preview-label" class="frame-preview-label">1 / ${frameCount}</span></div><div class="result-note">This JPEG frame browser uses Pipeline Sentinel's own decoder, so it works even when Chrome cannot play the MP4 codec.</div></div></details>`;
+        if (artifacts.run_manifest) {
+          try {
+            const manifest = await jsonFetch(artifacts.run_manifest.url);
+            const manifestFps = Number(manifest.render_fps);
+            if (Number.isFinite(manifestFps) && manifestFps > 0) previewFps = manifestFps;
+          } catch (_) {}
+        }
+        const durationS = frameCount / previewFps;
+        html += `<div class="section-title">Annotated video</div><video id="annotated-video" controls preload="metadata" poster="${escapeHtml(previewBase)}?frame=0" src="${escapeHtml(artifacts.annotated_video.url)}"></video><div id="annotated-video-hint" class="hint">Browser playback depends on the installed codec. If playback is unavailable, use the codec-safe annotated frame browser below or download the MP4.</div><details id="frame-preview-details" class="frame-preview"><summary>Browse annotated frames (codec-safe)</summary><div class="frame-preview-body"><img id="annotated-frame-preview" src="${escapeHtml(previewBase)}?frame=0" alt="Annotated frame preview" /><div class="frame-player-toolbar"><button id="frame-prev-button" class="frame-player-button" type="button">Previous</button><button id="frame-play-button" class="frame-player-button primary" type="button">Play</button><button id="frame-next-button" class="frame-player-button" type="button">Next</button><label class="frame-player-field" for="frame-speed-select">Speed <select id="frame-speed-select"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select></label><label class="frame-player-field"><input id="frame-loop-toggle" type="checkbox" /> Loop</label><span id="frame-preview-time" class="frame-preview-time">${formatTimestamp(0)} / ${formatTimestamp(durationS)}</span></div><div class="frame-preview-controls"><input id="frame-preview-slider" type="range" min="0" max="${frameCount - 1}" value="0" step="1" aria-label="Annotated frame" /><span id="frame-preview-label" class="frame-preview-label">1 / ${frameCount}</span></div><div class="result-note">Play uses Pipeline Sentinel's JPEG frame decoder, so it works even when Chrome cannot play the MP4 codec. Playback follows the run FPS when local decoding can keep up.</div></div></details>`;
       }
 
       const tabs = job.kind === 'run'
@@ -218,6 +253,10 @@
           : 'Your original read-in-place imagery will NOT be touched.';
         const confirmed = window.confirm(`Delete ${job.display_name} and its generated results?\n\n${sourceMessage}\n\nThis cannot be undone.`);
         if (!confirmed) return;
+        if (state.framePreviewStop) {
+          state.framePreviewStop();
+          state.framePreviewStop = null;
+        }
         deleteButton.disabled = true;
         deleteButton.textContent = 'Deleting…';
         try {
@@ -245,27 +284,116 @@
     const slider = document.getElementById('frame-preview-slider');
     const previewImage = document.getElementById('annotated-frame-preview');
     const previewLabel = document.getElementById('frame-preview-label');
-    if (slider && previewImage && previewLabel && previewBase) {
-      let previewTimer = null;
-      const updateLabel = () => {
-        const index = Number(slider.value || 0);
-        const total = Number(slider.max || 0) + 1;
+    const previewTime = document.getElementById('frame-preview-time');
+    const playButton = document.getElementById('frame-play-button');
+    const previousButton = document.getElementById('frame-prev-button');
+    const nextButton = document.getElementById('frame-next-button');
+    const speedSelect = document.getElementById('frame-speed-select');
+    const loopToggle = document.getElementById('frame-loop-toggle');
+    if (slider && previewImage && previewLabel && previewTime && playButton && previousButton && nextButton && speedSelect && loopToggle && previewBase) {
+      const total = Number(slider.max || 0) + 1;
+      const fps = Number.isFinite(Number(previewFps)) && Number(previewFps) > 0 ? Number(previewFps) : 30;
+      let playing = false;
+      let disposed = false;
+      let playbackTimer = null;
+      let scrubTimer = null;
+      let requestToken = 0;
+
+      const speed = () => Math.max(0.05, Number(speedSelect.value || 1));
+      const frameDelay = () => 1000 / (fps * speed());
+      const currentIndex = () => Math.max(0, Math.min(total - 1, Number(slider.value || 0)));
+      const clearPlaybackTimer = () => {
+        if (playbackTimer) clearTimeout(playbackTimer);
+        playbackTimer = null;
+      };
+      const updateMeta = () => {
+        const index = currentIndex();
         previewLabel.textContent = `${index + 1} / ${total}`;
+        previewTime.textContent = `${formatTimestamp(index / fps)} / ${formatTimestamp(total / fps)}`;
       };
-      const updateImage = () => {
-        const index = Number(slider.value || 0);
-        previewImage.src = `${previewBase}?frame=${index}`;
+      const updatePlayButton = () => {
+        playButton.textContent = playing ? 'Pause' : 'Play';
+        playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
       };
+      const pause = () => {
+        playing = false;
+        clearPlaybackTimer();
+        updatePlayButton();
+      };
+      const scheduleAdvance = (elapsedMs=0) => {
+        if (!playing || disposed) return;
+        clearPlaybackTimer();
+        playbackTimer = setTimeout(advanceFrame, Math.max(0, frameDelay() - elapsedMs));
+      };
+      const showFrame = (index, {schedule=false}={}) => {
+        const clamped = Math.max(0, Math.min(total - 1, Number(index) || 0));
+        slider.value = String(clamped);
+        updateMeta();
+        const token = ++requestToken;
+        const started = performance.now();
+        const loaded = () => {
+          if (token !== requestToken || disposed || !playing || !schedule) return;
+          scheduleAdvance(performance.now() - started);
+        };
+        previewImage.addEventListener('load', loaded, {once:true});
+        previewImage.src = `${previewBase}?frame=${clamped}`;
+      };
+      function advanceFrame() {
+        if (!playing || disposed) return;
+        let next = currentIndex() + 1;
+        if (next >= total) {
+          if (loopToggle.checked) next = 0;
+          else {
+            pause();
+            return;
+          }
+        }
+        showFrame(next, {schedule:true});
+      }
+      const play = () => {
+        if (playing || disposed) return;
+        if (currentIndex() >= total - 1 && !loopToggle.checked) showFrame(0);
+        playing = true;
+        updatePlayButton();
+        scheduleAdvance();
+      };
+      const step = (delta) => {
+        pause();
+        let next = currentIndex() + delta;
+        if (loopToggle.checked) next = (next + total) % total;
+        else next = Math.max(0, Math.min(total - 1, next));
+        showFrame(next);
+      };
+
+      playButton.addEventListener('click', () => playing ? pause() : play());
+      previousButton.addEventListener('click', () => step(-1));
+      nextButton.addEventListener('click', () => step(1));
+      speedSelect.addEventListener('change', () => {
+        if (playing) scheduleAdvance();
+      });
       slider.addEventListener('input', () => {
-        updateLabel();
-        if (previewTimer) clearTimeout(previewTimer);
-        previewTimer = setTimeout(updateImage, 120);
+        pause();
+        updateMeta();
+        if (scrubTimer) clearTimeout(scrubTimer);
+        scrubTimer = setTimeout(() => showFrame(currentIndex()), 90);
       });
       slider.addEventListener('change', () => {
-        if (previewTimer) clearTimeout(previewTimer);
-        updateLabel();
-        updateImage();
+        if (scrubTimer) clearTimeout(scrubTimer);
+        scrubTimer = null;
+        pause();
+        showFrame(currentIndex());
       });
+      previewImage.addEventListener('error', () => pause());
+      updateMeta();
+      updatePlayButton();
+
+      state.framePreviewStop = () => {
+        disposed = true;
+        pause();
+        if (scrubTimer) clearTimeout(scrubTimer);
+        scrubTimer = null;
+        requestToken += 1;
+      };
     }
 
     const video = document.getElementById('annotated-video');
@@ -275,7 +403,7 @@
       video.addEventListener('error', () => {
         video.style.display = 'none';
         framePreview.open = true;
-        if (videoHint) videoHint.textContent = 'Chrome could not decode this MP4. The annotated frame browser below remains fully usable, and the original artifact is still available in Downloads.';
+        if (videoHint) videoHint.textContent = 'Chrome could not decode this MP4. The annotated frame player below remains fully usable, and the original artifact is still available in Downloads.';
       });
     }
 
