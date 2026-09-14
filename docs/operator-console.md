@@ -33,16 +33,29 @@ The service does not duplicate detector, tracker, anomaly, event, fusion, or ale
 From a source checkout on Windows, double-click `start-operator.cmd`, or run:
 
 ```powershell
-uv sync --extra operator --group dev
+uv sync --extra operator --extra yolo --group dev
 uv run pipeline-sentinel-operator --open-browser
 ```
 
-From an installed release wheel:
+The source-checkout launcher installs the optional YOLO backend because that is the detector used by
+the current development/acceptance profile.
+
+From an installed release wheel, the Apache-licensed operator shell can be installed without
+Ultralytics:
 
 ```powershell
 python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator]"
 pipeline-sentinel-operator --open-browser
 ```
+
+To run the current YOLO production profile, opt in to the separate `yolo` extra as well:
+
+```powershell
+python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator,yolo]"
+```
+
+The optional Ultralytics runtime and model weights retain their own upstream license terms; see
+`THIRD_PARTY_NOTICES.md`.
 
 The default URL is `http://127.0.0.1:8765/`. OpenAPI documentation is available at `/docs`.
 
