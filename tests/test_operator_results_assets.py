@@ -13,5 +13,5 @@ def test_operator_console_loads_results_console(tmp_path):
 
         script = client.get("/results-console.js")
         assert script.status_code == 200
-        assert "Delete Run" in script.text
+        assert "Delete run & files" in script.text
         assert "result-tabs" in script.text
