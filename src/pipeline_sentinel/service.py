@@ -17,6 +17,7 @@ from . import __version__
 from .image_sources import IMAGE_SUFFIXES, LocalSourceType, inspect_local_source
 from .operator_jobs import safe_upload_name, validate_video_suffix
 from .operator_local_sources import LocalSourceOperatorJobManager
+from .operator_results import build_operator_results_router
 
 DEFAULT_MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -125,6 +126,7 @@ def create_app(
     app.state.job_manager = manager
     app.state.workspace = resolved_workspace
     app.state.allow_local_sources = allow_local_sources
+    app.include_router(build_operator_results_router(manager))
 
     @app.get("/", response_class=HTMLResponse)
     def operator_console() -> HTMLResponse:
@@ -132,7 +134,12 @@ def create_app(
         if not page.is_file():
             raise HTTPException(status_code=500, detail="bundled operator console is missing")
         html = page.read_text(encoding="utf-8")
-        html = html.replace("</body>", '<script src="/local-sources.js"></script>\n</body>')
+        html = html.replace(
+            "</body>",
+            '<script src="/local-sources.js"></script>\n'
+            '<script src="/results-console.js"></script>\n'
+            "</body>",
+        )
         return HTMLResponse(html)
 
     @app.get("/local-sources.js")
@@ -140,6 +147,13 @@ def create_app(
         script = Path(__file__).with_name("web") / "local-sources.js"
         if not script.is_file():
             raise HTTPException(status_code=500, detail="bundled local-source UI is missing")
+        return FileResponse(script, media_type="text/javascript")
+
+    @app.get("/results-console.js")
+    def results_console_javascript() -> FileResponse:
+        script = Path(__file__).with_name("web") / "results-console.js"
+        if not script.is_file():
+            raise HTTPException(status_code=500, detail="bundled results console is missing")
         return FileResponse(script, media_type="text/javascript")
 
     @app.get("/api/health")

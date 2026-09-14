@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+from contextlib import suppress
 from pathlib import Path
 
 from .image_sources import LocalSourceType, open_local_sequence
@@ -11,6 +13,81 @@ from .types import Modality
 
 class LocalSourceOperatorJobManager(OperatorJobManager):
     """Extend the operator queue with read-in-place local image sources."""
+
+    @staticmethod
+    def _path_size(path: Path) -> int:
+        """Return the on-disk size of one file or directory tree."""
+
+        if path.is_file():
+            try:
+                return path.stat().st_size
+            except OSError:
+                return 0
+        if not path.is_dir():
+            return 0
+        total = 0
+        for candidate in path.rglob("*"):
+            if candidate.is_file():
+                with suppress(OSError):
+                    total += candidate.stat().st_size
+        return total
+
+    def delete_job(self, job_id: str) -> dict[str, object]:
+        """Delete a finished job and only the workspace data Pipeline Sentinel owns.
+
+        Read-in-place imagery outside the operator workspace is never removed. Browser uploads live
+        under ``uploads/`` and are deleted with the job so disposable test runs can be cleaned up in
+        one action.
+        """
+
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise KeyError(job_id)
+            if job.status in {"queued", "running"}:
+                raise RuntimeError("active jobs cannot be deleted")
+
+            freed_bytes = 0
+            external_source_preserved = False
+
+            output_dir = Path(job.output_dir).expanduser().resolve()
+            output_root = self.runs_dir if job.kind == "run" else self.fusions_dir
+            try:
+                output_dir.relative_to(output_root)
+            except ValueError as exc:
+                raise ValueError("job output directory escaped the managed workspace") from exc
+            freed_bytes += self._path_size(output_dir)
+            shutil.rmtree(output_dir, ignore_errors=True)
+
+            runtime_config = self.workspace / "runtime-configs" / f"{job_id}.yaml"
+            if runtime_config.is_file():
+                freed_bytes += self._path_size(runtime_config)
+                runtime_config.unlink(missing_ok=True)
+
+            if job.input_path:
+                input_path = Path(job.input_path).expanduser().resolve()
+                try:
+                    relative = input_path.relative_to(self.uploads_dir)
+                except ValueError:
+                    external_source_preserved = True
+                else:
+                    if relative.parts:
+                        managed_upload = self.uploads_dir / relative.parts[0]
+                        freed_bytes += self._path_size(managed_upload)
+                        shutil.rmtree(managed_upload, ignore_errors=True)
+
+            job_path = self._job_path(job_id)
+            if job_path.is_file():
+                freed_bytes += self._path_size(job_path)
+                job_path.unlink(missing_ok=True)
+
+            self._jobs.pop(job_id, None)
+            return {
+                "job_id": job_id,
+                "deleted": True,
+                "freed_bytes": freed_bytes,
+                "external_source_preserved": external_source_preserved,
+            }
 
     def submit_local_sequence(
         self,
