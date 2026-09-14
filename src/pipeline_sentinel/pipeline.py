@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -8,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import cv2
-import pandas as pd
 
 from . import __version__
 from .anomaly import AnomalyAnalyzer
@@ -206,6 +206,13 @@ def _alert_row(alert: Alert) -> dict[str, object]:
     }
 
 
+def _open_csv(path: Path, columns: list[str]) -> tuple[Any, csv.DictWriter]:
+    handle = path.open("w", newline="", encoding="utf-8")
+    writer = csv.DictWriter(handle, fieldnames=columns)
+    writer.writeheader()
+    return handle, writer
+
+
 class PipelineSentinel:
     """Orchestrate detector, tracker, anomaly, event, and alert components."""
 
@@ -235,7 +242,12 @@ class PipelineSentinel:
         source_name: str | None = None,
         run_metadata: Mapping[str, Any] | None = None,
     ) -> RunArtifacts:
-        """Run the pipeline over any ordered stream of ``FrameContext`` objects."""
+        """Run the pipeline over any ordered ``FrameContext`` iterable.
+
+        Runtime evidence is written incrementally rather than retained as growing in-memory tables.
+        Apart from tracker/component state, the hot path therefore holds one decoded frame and that
+        frame's current observations at a time.
+        """
 
         if render_fps <= 0:
             raise ValueError("render_fps must be positive")
@@ -258,24 +270,47 @@ class PipelineSentinel:
 
         width, height = first.width, first.height
         annotated_video = output_dir / "annotated_video.mp4"
-        writer = cv2.VideoWriter(
+        detections_csv = output_dir / "detections.csv"
+        tracks_csv = output_dir / "tracks.csv"
+        anomalies_csv = output_dir / "anomalies.csv"
+        events_csv = output_dir / "events.csv"
+        alerts_csv = output_dir / "alerts.csv"
+
+        video_writer = cv2.VideoWriter(
             str(annotated_video),
             cv2.VideoWriter_fourcc(*"mp4v"),
             float(render_fps),
             (width, height),
         )
-        if not writer.isOpened():
+        if not video_writer.isOpened():
             raise RuntimeError(f"Could not open video writer: {annotated_video}")
 
-        detection_rows: list[dict[str, object]] = []
-        track_rows: list[dict[str, object]] = []
-        anomaly_rows: list[dict[str, object]] = []
-        event_rows: list[dict[str, object]] = []
-        alert_rows: list[dict[str, object]] = []
+        handles: list[Any] = []
+        try:
+            detection_handle, detection_writer = _open_csv(detections_csv, DETECTION_COLUMNS)
+            track_handle, track_writer = _open_csv(tracks_csv, TRACK_COLUMNS)
+            anomaly_handle, anomaly_writer = _open_csv(anomalies_csv, ANOMALY_COLUMNS)
+            event_handle, event_writer = _open_csv(events_csv, EVENT_COLUMNS)
+            alert_handle, alert_writer = _open_csv(alerts_csv, ALERT_COLUMNS)
+            handles.extend(
+                [detection_handle, track_handle, anomaly_handle, event_handle, alert_handle]
+            )
+        except Exception:
+            video_writer.release()
+            for handle in handles:
+                handle.close()
+            raise
+
         unique_track_ids: set[int] = set()
         frames_processed = 0
         first_frame_number = first.frame_number
         last_frame_number = first.frame_number
+        detections_emitted = 0
+        track_observations_emitted = 0
+        anomaly_observations_emitted = 0
+        anomalies_flagged = 0
+        events_emitted = 0
+        alerts_emitted = 0
 
         try:
             for frame in chain([first], iterator):
@@ -286,32 +321,43 @@ class PipelineSentinel:
                     )
 
                 detections = list(self.detector.detect(frame))
-                detection_rows.extend(_detection_row(detection, frame) for detection in detections)
+                for detection in detections:
+                    detection_writer.writerow(_detection_row(detection, frame))
+                    detections_emitted += 1
 
                 tracks = self.tracker.update(frame, detections)
-                track_rows.extend(_track_row(track, frame) for track in tracks)
-                unique_track_ids.update(track.track_id for track in tracks)
+                for track in tracks:
+                    track_writer.writerow(_track_row(track, frame))
+                    track_observations_emitted += 1
+                    unique_track_ids.add(track.track_id)
 
                 anomalies = (
                     self.anomaly_analyzer.update(frame, tracks)
                     if self.anomaly_analyzer is not None
                     else []
                 )
-                anomaly_rows.extend(_anomaly_row(observation, frame) for observation in anomalies)
+                for observation in anomalies:
+                    anomaly_writer.writerow(_anomaly_row(observation, frame))
+                    anomaly_observations_emitted += 1
+                    anomalies_flagged += int(observation.is_anomaly)
 
                 events: list[Event] = []
                 if self.event_detector is not None:
                     events.extend(self.event_detector.update(frame, tracks))
                 if self.anomaly_event_detector is not None:
                     events.extend(self.anomaly_event_detector.update(frame, anomalies))
-                event_rows.extend(_event_row(event) for event in events)
+                for event in events:
+                    event_writer.writerow(_event_row(event))
+                    events_emitted += 1
 
                 frame_alerts: list[Alert] = []
                 for event in events:
                     alert = self.alert_policy.evaluate(event)
                     if alert is not None:
                         frame_alerts.append(alert)
-                        alert_rows.append(_alert_row(alert))
+                        alert_writer.writerow(_alert_row(alert))
+                        alerts_emitted += 1
+
                 alert_track_ids = {
                     alert.track_id for alert in frame_alerts if alert.track_id is not None
                 }
@@ -340,28 +386,16 @@ class PipelineSentinel:
                         cv2.LINE_AA,
                     )
 
-                writer.write(rendered)
+                video_writer.write(rendered)
                 frames_processed += 1
                 last_frame_number = frame.frame_number
         finally:
-            writer.release()
-
-        detections_csv = output_dir / "detections.csv"
-        pd.DataFrame(detection_rows, columns=DETECTION_COLUMNS).to_csv(detections_csv, index=False)
-
-        tracks_csv = output_dir / "tracks.csv"
-        pd.DataFrame(track_rows, columns=TRACK_COLUMNS).to_csv(tracks_csv, index=False)
-
-        anomalies_csv = output_dir / "anomalies.csv"
-        pd.DataFrame(anomaly_rows, columns=ANOMALY_COLUMNS).to_csv(anomalies_csv, index=False)
-
-        events_csv = output_dir / "events.csv"
-        pd.DataFrame(event_rows, columns=EVENT_COLUMNS).to_csv(events_csv, index=False)
-
-        alerts_csv = output_dir / "alerts.csv"
-        pd.DataFrame(alert_rows, columns=ALERT_COLUMNS).to_csv(alerts_csv, index=False)
+            video_writer.release()
+            for handle in handles:
+                handle.close()
 
         metadata = dict(run_metadata or {})
+        metadata.setdefault("evidence_write_mode", "streaming_csv")
         run_manifest = output_dir / "run_manifest.json"
         run_manifest.write_text(
             json.dumps(
@@ -384,13 +418,13 @@ class PipelineSentinel:
                     "frames_processed": frames_processed,
                     "first_frame_number": first_frame_number,
                     "last_frame_number": last_frame_number,
-                    "detections_emitted": len(detection_rows),
-                    "track_observations_emitted": len(track_rows),
+                    "detections_emitted": detections_emitted,
+                    "track_observations_emitted": track_observations_emitted,
                     "unique_tracks": len(unique_track_ids),
-                    "anomaly_observations_emitted": len(anomaly_rows),
-                    "anomalies_flagged": sum(bool(row["is_anomaly"]) for row in anomaly_rows),
-                    "events_emitted": len(event_rows),
-                    "alerts_emitted": len(alert_rows),
+                    "anomaly_observations_emitted": anomaly_observations_emitted,
+                    "anomalies_flagged": anomalies_flagged,
+                    "events_emitted": events_emitted,
+                    "alerts_emitted": alerts_emitted,
                     "render_fps": float(render_fps),
                     "metadata": metadata,
                     "artifacts": {
@@ -459,5 +493,5 @@ class PipelineSentinel:
             output_dir,
             render_fps=fps,
             source_name=str(video_path),
-            run_metadata={"source_type": "encoded_video"},
+            run_metadata={"source_type": "encoded_video", "source_access": "streamed_in_place"},
         )
