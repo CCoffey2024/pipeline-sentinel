@@ -1,18 +1,22 @@
 # Production-style runtime
 
-Pipeline Sentinel v0.6 adds a single config-driven entry point for repeatable operational runs. The
-purpose is to stop treating a long list of CLI flags as the runtime configuration and make every run
-self-describing and auditable.
+Pipeline Sentinel uses a single config-driven entry point for repeatable operational runs. The purpose is to stop treating a long list of CLI flags as the runtime configuration and make every run self-describing and auditable.
 
 ## Primary command
 
-Install the optional learned-model runtime, then run one encoded EO/IR video:
+Install the learned-model runtime required by the configuration, then run one encoded EO/IR video:
 
 ```powershell
 uv sync --extra yolo --group dev
 
 uv run pipeline-sentinel run .\input.mp4 `
   --config .\config\production.yaml
+```
+
+When anomaly scoring is enabled, install both optional runtimes:
+
+```powershell
+uv sync --extra yolo --extra dinov2 --group dev
 ```
 
 If `--output` is omitted, Pipeline Sentinel creates:
@@ -29,9 +33,7 @@ An exact destination can be supplied with `--output`.
 uv run pipeline-sentinel validate-config .\config\production.yaml
 ```
 
-Validation rejects unknown keys as well as invalid probabilities, image sizes, tracker settings,
-severities, modalities, and unsupported backends. This is deliberate: a misspelled production
-setting should fail loudly instead of silently falling back to a default.
+Validation rejects unknown keys as well as invalid probabilities, image sizes, tracker settings, anomaly settings, severities, modalities, and unsupported backends. This is deliberate: a misspelled production setting should fail loudly instead of silently falling back to a default.
 
 ## Production profile
 
@@ -48,6 +50,10 @@ IoU tracker
   -> association IoU 0.30
   -> expire after 2 missed updates
 
+DINOv2 anomaly scoring
+  -> disabled by default
+  -> requires a fitted normal-reference .npz artifact when enabled
+
 Dwell event rule
   -> disabled by default
 
@@ -55,12 +61,31 @@ Severity alert policy
   -> warning or higher
 ```
 
-The 960 inference size is intentional. In the current VisDrone validation slice, 960 materially
-improved person recall over 640 while avoiding the larger precision penalty observed at 1280. That
-benchmark result is evidence for the current default, not a claim that 960 is universally optimal.
+The 960 inference size is intentional. In the current VisDrone validation slice, 960 materially improved person recall over 640 while avoiding the larger precision penalty observed at 1280. That benchmark result is evidence for the current default, not a claim that 960 is universally optimal.
 
-Dwell events remain disabled by default because persistence thresholds are deployment policy, not a
-safe universal inference default.
+Dwell and anomaly-event policies remain conservative by default because persistence thresholds and definitions of normal activity are deployment policy, not safe universal inference defaults.
+
+## Anomaly configuration
+
+Notebook 06 is promoted behind an optional runtime boundary. An example enabled configuration is:
+
+```yaml
+anomaly:
+  enabled: true
+  backend: dinov2
+  reference_path: ../references/person-dinov2-vits14.npz
+  model: dinov2_vits14
+  device: cpu
+  labels:
+    - person
+  min_track_hits: 3
+  pad_px: 6
+  min_crop_size: 12
+  event_min_consecutive: 3
+  event_severity: warning
+```
+
+The configured reference must have been fitted with the same embedder identity. Relative reference paths resolve relative to the YAML file. See `docs/anomaly-scoring.md` for reference fitting and interpretation.
 
 ## Run artifact contract
 
@@ -70,6 +95,7 @@ A completed production-style run contains:
 annotated_video.mp4
 detections.csv
 tracks.csv
+anomalies.csv
 events.csv
 alerts.csv
 run_manifest.json
@@ -78,34 +104,29 @@ run_log.jsonl
 run_status.json
 ```
 
-`effective_config.json` is the parsed configuration actually used by the application plus the SHA-256
-of the source YAML. `run_manifest.json` contains model/runtime output counts and embeds the run ID,
-configuration provenance, Python version, executable, and platform metadata.
+`anomalies.csv` is always present. It is empty when anomaly scoring is disabled. When enabled, it records scored track observations separately from semantic events and human-facing alerts.
 
-`run_log.jsonl` is an append-only machine-readable lifecycle log. A normal run contains
-`run_started` followed by `run_completed`. A failed run records `run_failed` with exception type and
-message.
+`effective_config.json` is the parsed configuration actually used by the application plus the SHA-256 of the source YAML. `run_manifest.json` contains model/runtime output counts and embeds the run ID, configuration provenance, Python version, executable, and platform metadata.
 
-`run_status.json` is the simple orchestration status record. It is written as `running` before model
-inference begins and is rewritten as `completed` or `failed`. This means a failed production run still
-leaves useful operational evidence even when normal model artifacts could not be completed.
+`run_log.jsonl` is an append-only machine-readable lifecycle log. A normal run contains `run_started` followed by `run_completed`. A failed run records `run_failed` with exception type and message.
+
+`run_status.json` is the simple orchestration status record. It is written as `running` before model inference begins and is rewritten as `completed` or `failed`. This means a failed production run still leaves useful operational evidence even when normal model artifacts could not be completed.
 
 ## Why this boundary matters
 
-The existing lower-level commands remain useful for development and benchmarking:
+The lower-level commands remain useful for development and benchmarking:
 
 ```text
 run-yolo
 run-visdrone
 evaluate-visdrone
 demo
+pipeline-sentinel-fit-reference
 ```
 
-The `run` command is different. It is the stable application-facing entry point. Model, tracker,
-event, alert, sensor, and modality choices come from validated configuration rather than requiring an
-operator to reconstruct a long experimental command line.
+The `run` command is different. It is the stable application-facing entry point. Model, tracker, anomaly, event, alert, sensor, and modality choices come from validated configuration rather than requiring an operator to reconstruct a long experimental command line.
 
-The intended progression is now:
+The intended progression is:
 
 ```text
 notebook experiment
