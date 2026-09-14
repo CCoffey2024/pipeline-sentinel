@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 from .image_sources import LocalSourceType, open_local_sequence
-from .operator_jobs import OperatorJob, OperatorJobManager, make_operator_job_id, utc_now
 from .operations import run_configured_frames
+from .operator_jobs import OperatorJob, OperatorJobManager, make_operator_job_id, utc_now
 from .types import Modality
 
 
