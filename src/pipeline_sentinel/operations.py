@@ -4,11 +4,11 @@ import json
 import platform
 import sys
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from . import __version__
 from .anomaly import AnomalyReference, TrackCropAnomalyAnalyzer
