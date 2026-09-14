@@ -11,7 +11,7 @@ representation models, fusion policies, delivery layers, and alert logic can cha
 > **Scope:** defensive sensing, detection, tracking, anomaly scoring, sensor fusion, and analyst
 > alerting for a fictional pipeline corridor. No automated engagement or weapons logic.
 
-## Current development milestone — v0.10
+## Current development milestone — v0.12 MVP candidate
 
 ```text
 v0.1   ingest + data contracts
@@ -24,6 +24,8 @@ v0.7   wheel/sdist release engineering
 v0.8   DINOv2-backed anomaly-scoring boundary
 v0.9   EO/IR semantic-event late fusion
 v0.10  local service/API + operator-facing web console
+v0.11  read-in-place image folders + VisDrone/UAVDT operator sources
+v0.12  unified video/image ingest + MVP packaging/acceptance hardening
 ```
 
 The semantic rule remains:
@@ -32,12 +34,13 @@ The semantic rule remains:
 detection != track != anomaly observation != event != alert
 ```
 
-The application-delivery rule is now equally important:
+The application-delivery rule is equally important:
 
 ```text
 UI != analytics
 API != analytics
 job orchestration != analytics
+source adapter != copied dataset
 ```
 
 The browser console and HTTP service consume the same production APIs and evidence artifacts as the
@@ -45,8 +48,8 @@ CLI rather than creating a second implementation of the vision pipeline.
 
 ## Operator console
 
-For the first time, Pipeline Sentinel can be driven as an operator application instead of as a set of
-CLI commands.
+Pipeline Sentinel can be driven as an operator application instead of as a set of notebook or CLI
+steps.
 
 From a source checkout on Windows, double-click:
 
@@ -70,8 +73,11 @@ http://127.0.0.1:8765/
 
 From the UI an operator can:
 
-- choose an EO, IR, or other video;
-- assign a sensor ID and modality;
+- select one supported encoded video or one-or-more still-image frames;
+- point at a large local image folder and read it in place;
+- use native VisDrone or UAVDT image-sequence layouts;
+- assign a sensor ID and EO, IR, or OTHER modality independently of file type;
+- set working FPS for generic still-image sequences;
 - start a production analysis run with one button;
 - watch queued/running/completed/failed jobs;
 - inspect summary counts and alerts;
@@ -83,35 +89,41 @@ The default operator workspace is:
 ```text
 outputs/operator/
 ├── jobs/              persisted job state
-├── uploads/           browser-uploaded source video
+├── uploads/           browser-uploaded media
 ├── runtime-configs/   job-specific validated runtime identity
 ├── runs/              production-run evidence
 └── fusions/           multisensor fusion evidence
 ```
 
-The v0.10 service is deliberately local-first. It binds to loopback by default and has no
-authentication or multi-user security model. A non-loopback bind is refused unless `--allow-remote`
-is explicitly supplied. Do not expose this version directly to an untrusted network.
+Large local image sources are read in place and are not mirrored into the workspace.
 
-See `docs/operator-console.md`.
+The v0.12 MVP service is deliberately local-first. It binds to loopback by default and has no
+authentication or multi-user security model. A non-loopback bind is refused unless `--allow-remote`
+is explicitly supplied. Local-filesystem source APIs are disabled on non-loopback binds. Do not expose
+this version directly to an untrusted network.
+
+See `docs/operator-console.md` and `docs/mvp-acceptance.md`.
 
 ## Install a release artifact
 
 Core package:
 
 ```powershell
-python -m pip install .\pipeline_sentinel-0.10.0-py3-none-any.whl
+python -m pip install .\pipeline_sentinel-0.12.0-py3-none-any.whl
 ```
 
 Operator application, including the local web service and YOLO runtime:
 
 ```powershell
-python -m pip install ".\pipeline_sentinel-0.10.0-py3-none-any.whl[operator]"
+python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator]"
 pipeline-sentinel-operator --open-browser
 ```
 
 DINOv2 remains a separate optional extra because anomaly scoring is disabled in the shipped
 production profile until a fitted normal-reference artifact is supplied.
+
+Model weights and datasets are not vendored into the release artifact. The configured detector model
+may need to be obtained by its upstream runtime on first use.
 
 ## Single-sensor runtime
 
@@ -253,13 +265,17 @@ The web console uses the same documented HTTP API available at `/docs`:
 GET  /api/health
 GET  /api/jobs
 GET  /api/jobs/{job_id}
-POST /api/jobs/run
+POST /api/jobs/media
+POST /api/local-sources/inspect
+POST /api/jobs/local-sequence
 POST /api/jobs/fusion
 GET  /api/jobs/{job_id}/alerts
 GET  /api/jobs/{job_id}/events
 GET  /api/jobs/{job_id}/artifacts
 GET  /api/jobs/{job_id}/artifacts/{artifact_name}
 ```
+
+`POST /api/jobs/run` remains available as the backward-compatible encoded-video upload endpoint.
 
 The default worker count is one. This protects a workstation from accidentally starting several
 GPU-heavy model stacks concurrently merely because an operator clicked a button several times.
@@ -278,7 +294,10 @@ uv run pipeline-sentinel demo --output outputs\demo
 CI does not download detector weights, DINOv2 weights, or benchmark datasets. It tests contracts,
 configuration, source adapters, detector normalization, tracking, anomaly scoring, event generation,
 fusion, operator-job orchestration, HTTP routes, policy behavior, operational artifacts, release
-metadata, package building, and clean-wheel installation with deterministic fixtures.
+metadata, package building, clean-wheel installation, and Windows workstation compatibility with
+deterministic fixtures.
+
+The release-candidate manual test sequence is in `docs/mvp-acceptance.md`.
 
 ## Runtime contracts
 
@@ -321,8 +340,10 @@ match/exclusion artifacts. It is explicitly not presented as the official VisDro
 ## Release engineering
 
 Versioned tags drive a release workflow that validates metadata, runs lint/tests, builds the wheel and
-source distribution, generates SHA-256 checksums, installs the wheel into a clean environment,
-smoke-tests packaged configuration/CLIs/UI assets, and only then creates a GitHub Release.
+source distribution, generates SHA-256 checksums, installs the wheel into clean environments,
+smoke-tests packaged configuration/CLIs/UI assets/operator dependencies, and only then creates a
+GitHub Release. Normal CI also exercises the deterministic test suite and clean operator-wheel install
+on Windows.
 
 See `docs/release.md`.
 
@@ -345,6 +366,7 @@ pipeline-sentinel/
 
 Useful documentation:
 
+- `docs/mvp-acceptance.md` — v0.12 release-candidate and external tester checklist.
 - `docs/operator-console.md` — local service, UI, job workspace, API, and security boundary.
 - `docs/architecture.md` — runtime boundaries and contracts.
 - `docs/production-run.md` — config-driven single-sensor execution and provenance.
@@ -355,12 +377,17 @@ Useful documentation:
 - `docs/testing.md` — CI and workstation acceptance.
 - `docs/visdrone.md` — aerial validation workflow.
 
-## Development direction
+## MVP boundaries and development direction
 
-The notebook-derived analytical layers and first delivery layer are now represented in the package.
-The next work should focus on hardening the operator experience: retention controls, richer run
-inspection, browser-compatible video delivery, deployment packaging, authentication before any remote
-use, and eventually a desktop wrapper if one-click workstation launch is worth formalizing.
+v0.12 is meant to be a shippable **testing MVP**, not the final operator platform. The next source
+boundary should be first-class live RTSP/USB/network-camera ingestion using the existing lazy
+`FrameContext` contract. Other post-MVP work includes retention controls, richer run inspection,
+browser-compatible video delivery across more codecs, authentication before remote use, and possibly
+a desktop wrapper if one-click workstation launch is worth formalizing.
+
+Generic image-folder ingest does not perform raw/radiometric thermal calibration, and unusual
+proprietary camera containers/codecs may still fail at the underlying decode layer. See
+`docs/mvp-acceptance.md` for the explicit test boundary and known limitations.
 
 ## External runtime licensing
 
