@@ -53,7 +53,8 @@ jobs:
           .release-test/bin/python -m pip install dist/*.whl
           .release-test/bin/pipeline-sentinel --version | grep "${VERSION}"
           .release-test/bin/python -m pipeline_sentinel --version | grep "${VERSION}"
-          .release-test/bin/python -c "from pipeline_sentinel.config import load_production_config; c, _ = load_production_config(); assert c.detector.imgsz == 960"
+          .release-test/bin/pipeline-sentinel-fit-reference --help > /dev/null
+          .release-test/bin/python -c "from pipeline_sentinel.config import load_production_config; c, _ = load_production_config(); assert c.detector.imgsz == 960 and c.anomaly.enabled is False"
 
       - name: Create GitHub release
         env:
