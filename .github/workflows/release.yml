@@ -45,7 +45,7 @@ jobs:
       - name: Generate release checksums
         run: uv run python scripts/generate_checksums.py dist
 
-      - name: Smoke test built wheel
+      - name: Smoke test built core wheel
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -59,6 +59,17 @@ jobs:
           .release-test/bin/python -c "from pipeline_sentinel.image_sources import UavdtDataset, ImageFolderSequence; assert UavdtDataset and ImageFolderSequence"
           .release-test/bin/python -c "from pipeline_sentinel.config import load_production_config; c, _ = load_production_config(); assert c.detector.imgsz == 960 and c.anomaly.enabled is False"
           .release-test/bin/python -c "from pipeline_sentinel.fusion import load_fusion_config; c, _ = load_fusion_config(); assert c.strategy == 'temporal_consensus' and c.min_sensors == 2"
+
+      - name: Smoke test built operator wheel
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          WHEEL=$(find dist -maxdepth 1 -name '*.whl' -print -quit)
+          test -n "${WHEEL}"
+          python -m venv .operator-release-test
+          .operator-release-test/bin/python -m pip install "${WHEEL}[operator]"
+          .operator-release-test/bin/pipeline-sentinel-operator --version | grep "${VERSION}"
+          .operator-release-test/bin/python -c "from pathlib import Path; from pipeline_sentinel.service import create_app; app=create_app(workspace=Path('.operator-release-smoke')); assert any(r.path == '/api/jobs/media' for r in app.routes); assert any(r.path == '/api/jobs/local-sequence' for r in app.routes); app.state.job_manager.close()"
 
       - name: Create GitHub release
         env:
