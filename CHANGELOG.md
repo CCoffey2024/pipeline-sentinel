@@ -2,6 +2,22 @@
 
 All notable changes to Pipeline Sentinel are documented here. Versions use semantic versioning.
 
+## [0.9.0] - 2026-09-13
+
+### Added
+- config-driven semantic-event late fusion for two or more completed sensor runs;
+- temporal consensus matching across distinct sensor IDs with configurable time tolerance;
+- optional label agreement and explicit spatial-IoU gating for registered sensor products;
+- `fusion_events.csv`, `fusion_alerts.csv`, `fusion_contributors.csv`, and `fusion_manifest.json` artifacts;
+- strict fusion configuration with packaged and repository profiles;
+- `validate-fusion-config` and `fuse-runs` CLI commands;
+- deterministic tests for temporal, semantic, spatial, provenance, and alert-policy behavior.
+
+### Changed
+- package version advanced to `0.9.0`;
+- EO/IR fusion happens after independent per-sensor inference and semantic event generation rather than mixing raw pixels or framework-specific model state;
+- fused confidence is intentionally left unset because independent sensor/model confidences are not assumed to be calibrated onto one probability scale.
+
 ## [0.8.0] - 2026-09-13
 
 ### Added
