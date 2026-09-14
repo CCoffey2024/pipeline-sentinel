@@ -1,0 +1,13 @@
+# Pipeline Sentinel late-fusion profile.
+# This combines semantic events from independently processed sensor runs.
+strategy: temporal_consensus
+max_time_delta_s: 0.50
+min_sensors: 2
+require_matching_label: true
+
+# Set only when the sensor products are known to be registered into the same pixel geometry.
+# When set, contributing track boxes must also satisfy this IoU threshold.
+spatial_iou_threshold: null
+
+alerts:
+  minimum_severity: warning

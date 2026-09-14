@@ -7,14 +7,14 @@ whose runtime depends on **contracts**, not on particular datasets or ML framewo
 
 The central design rule is:
 
-> A sensor source, model runtime, tracker, or event algorithm may change without forcing unrelated
-> downstream code to change.
+> A sensor source, model runtime, tracker, representation model, event algorithm, or fusion strategy
+> may change without forcing unrelated downstream code to change.
 
 OpenCV video capture, VisDrone image sequences, Ultralytics YOLO, a future ONNX/TensorRT detector,
-ByteTrack, DeepSORT, DINOv2, or another provider runtime should live behind adapters. The rest of the
-system consumes stable Pipeline Sentinel types.
+ByteTrack, DeepSORT, DINOv2, and multisensor fusion all live behind explicit boundaries. The rest of
+the system consumes stable Pipeline Sentinel types and persisted evidence artifacts.
 
-## v0.5 runtime flow
+## Single-sensor runtime flow
 
 ```text
 encoded video -------------------+
@@ -35,8 +35,18 @@ future stream / still source ----+
                                       v
                                     Track[]
                                       |
-                                      v
-                           EventDetector contract
+                    +-----------------+-----------------+
+                    |                                   |
+                    v                                   v
+             AnomalyAnalyzer                     EventDetector
+                    |                                   |
+                    v                                   |
+          AnomalyObservation[]                          |
+                    |                                   |
+                    v                                   |
+          AnomalyEventDetector                          |
+                    |                                   |
+                    +-----------------+-----------------+
                                       |
                                       v
                                     Event[]
@@ -53,15 +63,32 @@ future stream / still source ----+
              CSV evidence       annotated video       future API/UI
 ```
 
-This is the important semantic separation:
+The semantic separation is now:
 
 ```text
-detection != track != event != alert
+detection != track != anomaly observation != event != alert
 ```
 
-A detector observes an object in one frame. A tracker establishes temporal identity. An event detector
-uses track history or other evidence to infer a temporal condition. An alert policy decides whether
-that event deserves a human-facing notification.
+A detector observes an object in one frame. A tracker establishes temporal identity. An anomaly
+analyzer may score the tracked appearance against a learned normal reference. Event logic decides
+whether track history or persistent anomaly evidence represents a semantic condition. Alert policy
+then decides whether a human operator should be notified.
+
+## Multisensor late-fusion flow
+
+Completed sensor runs remain independently auditable and may then be fused:
+
+```text
+EO run -> Event[] ----+
+                      |
+IR run -> Event[] ----+--> TemporalConsensusFuser --> fused Event[] --> AlertPolicy
+                      |
+other sensor Event[] -+
+```
+
+This is **late fusion**. v0.9 does not blend raw EO/IR pixels or provider-specific neural features.
+The fusion layer consumes normalized semantic events and emits ordinary `Event` objects so downstream
+alert policy remains unchanged.
 
 ## Data contracts
 
@@ -86,10 +113,16 @@ A detector observation associated with a stable runtime `track_id`. It carries t
 class, confidence, observation count (`hits`), and first-seen frame/time. It does not depend on the
 internal state type of any tracking library.
 
+### `AnomalyObservation`
+
+One track-crop score relative to a persisted normal reference. It records the score, threshold,
+anomaly decision, source analyzer, and metadata. It is evidence rather than an alert.
+
 ### `Event`
 
-Temporal or semantic evidence derived from tracks. Events have an explicit `event_type`, severity,
-source component, optional track ID, and auditable metadata.
+Temporal or semantic evidence derived from tracks, anomaly persistence, known synthetic roles, or
+late multisensor fusion. Events have an explicit `event_type`, severity, source component, optional
+track ID, and auditable metadata.
 
 ### `Alert`
 
@@ -122,48 +155,55 @@ class Tracker(Protocol):
         ...
 ```
 
-v0.5 ships `IoUTracker`, a deterministic same-class greedy IoU tracker. It is intentionally small and
-replaceable. A future ByteTrack or DeepSORT adapter should return the same `Track` contract, leaving
-event code unchanged.
+Pipeline Sentinel ships `IoUTracker`, a deterministic same-class greedy IoU tracker. It is
+intentionally small and replaceable. A future ByteTrack or DeepSORT adapter should return the same
+`Track` contract, leaving event and anomaly code unchanged.
 
-The baseline tracker is useful for integration, deterministic tests, and simple scenes. It is not a
-claim of state-of-the-art multi-object tracking in dense aerial imagery.
-
-## Event detector contract
+## Representation / anomaly boundary
 
 ```python
-class EventDetector(Protocol):
+class Embedder(Protocol):
     name: str
 
-    def reset(self) -> None:
-        ...
-
-    def update(self, frame: FrameContext, tracks: list[Track]) -> list[Event]:
+    def encode(self, images: Sequence[np.ndarray]) -> np.ndarray:
         ...
 ```
 
-v0.5 includes two implementations:
+The optional DINOv2 adapter keeps Torch, devices, model loading, and preprocessing inside the
+adapter. `TrackCropAnomalyAnalyzer` receives only NumPy embeddings and a persisted normal-reference
+artifact.
 
-- `ScenarioRoleEventDetector` converts known synthetic/reference roles into events for deterministic
-  end-to-end testing. Learned detectors do not receive these roles.
-- `DwellEventDetector` is a configurable baseline rule that emits one warning event after a track has
-  persisted for a minimum number of observations while remaining within a displacement threshold.
+The current Notebook-06-derived baseline uses cosine distance from the normal centroid with a fitted
+normal quantile threshold. A persistence-gated anomaly event detector separates a single unusual
+score from a semantic `visual_anomaly` event.
 
-The dwell rule is intentionally described as a baseline rule, not mission-grade behavior analysis.
+## Event and alert boundaries
 
-## Alert policy contract
+`ScenarioRoleEventDetector` converts known synthetic/reference roles into events for deterministic
+software tests. `DwellEventDetector` is a configurable baseline persistence rule for learned tracks.
+`ConsecutiveAnomalyEventDetector` converts persistent anomaly observations into a semantic event.
 
-```python
-class AlertPolicy(Protocol):
-    name: str
-
-    def evaluate(self, event: Event) -> Alert | None:
-        ...
-```
+All of them ultimately produce the same `Event` contract.
 
 `SeverityAlertPolicy` promotes events at or above a configured severity threshold. The deterministic
 reference demo marks `normal_maintenance` as informational, so it appears in `events.csv` but not in
-`alerts.csv`. That is a deliberate integration test of **event != alert**.
+`alerts.csv`.
+
+## Fusion boundary
+
+`TemporalConsensusFuser` consumes persisted events from two or more completed sensor runs. Matching
+always requires distinct sensor IDs and equal event types, and may additionally require label
+agreement and pixel-space IoU.
+
+Pixel-space IoU is opt-in. A configured spatial threshold asserts that the source sensor products have
+already been registered into a common geometry. With no spatial threshold, the fuser makes no pixel
+registration claim and uses temporal + semantic evidence only.
+
+The fused event confidence is deliberately left unset because source-model confidences are not
+assumed to be calibrated to the same probability scale. Contributor confidences remain in the audit
+artifact.
+
+See `docs/sensor-fusion.md` for the operational contract.
 
 ## Source and model adapters
 
@@ -171,46 +211,39 @@ reference demo marks `normal_maintenance` as informational, so it appears in `ev
 `PipelineSentinel.run_frames()` accepts any ordered `FrameContext` iterable, including VisDrone JPEG
 sequences.
 
-`YoloDetector` alone understands Ultralytics result objects. `VisDroneDataset` alone understands the
-VisDrone directory/annotation format. The benchmark layer alone owns COCO-to-VisDrone ontology
-mapping.
-
-Those boundaries remain unchanged in v0.5.
+`YoloDetector` alone understands Ultralytics result objects. `DinoV2Embedder` alone understands Torch
+and DINOv2 model objects. `VisDroneDataset` alone understands the VisDrone directory/annotation
+format. The benchmark layer alone owns COCO-to-VisDrone ontology mapping. The fusion layer consumes
+Pipeline Sentinel evidence rather than any of those provider objects.
 
 ## Run artifacts
 
-A normal runtime run now produces:
+A single-sensor runtime run produces:
 
 ```text
 annotated_video.mp4
 detections.csv
 tracks.csv
+anomalies.csv
 events.csv
 alerts.csv
 run_manifest.json
 ```
 
-Dataset-backed runs may add source evidence such as `ground_truth.csv`; benchmark evaluation adds its
-own benchmark directory. Detection truth, runtime tracks, semantic events, and alerts remain separate
-artifacts so each layer can be inspected independently.
+A config-driven production run additionally records effective configuration, structured lifecycle
+logging, and run status.
 
-The run manifest records component backends and counts including detector, tracker, event detector,
-alert policy, detection rows, track observations, unique tracks, events, and alerts.
+A late-fusion run produces:
 
-## Learned-detector event path
-
-YOLO detections are tracked by default but still do **not** automatically become events or alerts.
-For controlled experiments the CLI can enable the baseline dwell rule:
-
-```powershell
-uv run pipeline-sentinel run-yolo input.mp4 `
-  --enable-dwell-events `
-  --dwell-label person `
-  --dwell-min-hits 30 `
-  --dwell-max-displacement-px 40
+```text
+fusion_events.csv
+fusion_alerts.csv
+fusion_contributors.csv
+fusion_manifest.json
+effective_fusion_config.json
 ```
 
-This makes the semantic step explicit and configurable instead of hiding it in detector code.
+Evidence stays layered so each inference and policy decision can be audited independently.
 
 ## Testing strategy
 
@@ -226,8 +259,14 @@ fake detector tests
 IoU tracker tests
     -> stable IDs, class-aware association, expiration, reset
 
+anomaly tests
+    -> reference fitting, serialization, scoring, persistence
+
 event/policy tests
-    -> one-time events, dwell rules, severity promotion
+    -> semantic event generation and severity promotion
+
+fusion tests
+    -> time, label, sensor identity, optional spatial gating, audit artifacts
 
 end-to-end synthetic demo
     -> Detection -> Track -> Event -> Alert
@@ -239,8 +278,9 @@ local VisDrone + YOLO
 ## Definition of a healthy architecture
 
 A new detector should require a detector adapter, not tracker rewrites. A new tracker should return
-`Track` objects, not force event code to understand provider state. A new event algorithm should
-consume stable runtime evidence, not Ultralytics boxes. A new alert policy should consume `Event`
-objects, not raw detections.
+`Track` objects, not force event code to understand provider state. A new representation model should
+implement `Embedder` without changing anomaly policy. A new fusion strategy should consume normalized
+sensor evidence rather than raw framework objects. A new alert policy should consume `Event` objects,
+not raw detections.
 
 If those substitutions force unrelated layers to change, the boundary has failed.

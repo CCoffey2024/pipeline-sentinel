@@ -1,25 +1,41 @@
 # Pipeline Sentinel
 
 Pipeline Sentinel is a modular computer-vision application for turning EO/IR video and image streams
-into detections, temporal tracks, semantic events, and human-facing alerts.
+into detections, tracks, anomaly evidence, semantic events, multisensor corroboration, and
+human-facing alerts.
 
-The project began as a sequence of learning/R&D notebooks. Stable concepts are being promoted into an
-installable Python package so model runtimes, source adapters, trackers, and event algorithms can be
-replaced without rewriting the rest of the system.
+The project began as a sequence of learning/R&D notebooks. Stable ideas are promoted into an
+installable Python package behind explicit contracts so source adapters, model runtimes, trackers,
+representation models, fusion policies, and alert logic can change independently.
 
-> **Scope:** defensive sensing, detection, tracking, anomaly scoring, sensor fusion, and human-facing
-> alerts for a fictional pipeline corridor. No automated engagement or weapons logic.
+> **Scope:** defensive sensing, detection, tracking, anomaly scoring, sensor fusion, and analyst
+> alerting for a fictional pipeline corridor. No automated engagement or weapons logic.
 
-## v0.7 milestone — releasable production package
+## Current development milestone — v0.9
 
-v0.1 established ingest and data contracts. v0.2 added the optional YOLO detector adapter. v0.3 made
-VisDrone image sequences a repeatable aerial source. v0.4 added detector-quality evaluation. v0.5
-added tracking, events, and alert policy. v0.6 added config-driven, auditable production runs.
-**v0.7 adds release engineering:** one version source of truth, reproducible wheel/sdist builds,
-checksum manifests, clean-install smoke tests, retained CI distributions, and tag-driven GitHub
-Releases.
+```text
+v0.1  ingest + data contracts
+v0.2  optional YOLO detector adapter
+v0.3  generic frame streams + VisDrone source
+v0.4  repeatable detector evaluation
+v0.5  tracking -> events -> alert policy
+v0.6  config-driven production runs + provenance
+v0.7  wheel/sdist release engineering
+v0.8  DINOv2-backed anomaly-scoring boundary
+v0.9  EO/IR semantic-event late fusion
+```
 
-The application flow remains:
+The semantic rule is now:
+
+```text
+detection != track != anomaly observation != event != alert
+```
+
+A model saying “person here” is not the same thing as establishing temporal identity, deciding an
+appearance is unusual, inferring a semantic condition, corroborating that condition with another
+sensor, or deciding that an operator should be notified.
+
+## Single-sensor runtime
 
 ```text
 FrameContext
@@ -27,59 +43,43 @@ FrameContext
     -> Detection[]
     -> Tracker
     -> Track[]
-    -> EventDetector
-    -> Event[]
-    -> AlertPolicy
-    -> Alert[]
+        |              \
+        |               -> EventDetector
+        v
+    AnomalyAnalyzer
+        |
+    AnomalyObservation[]
+        |
+    AnomalyEventDetector
+        |              /
+        +-------------+
+              |
+           Event[]
+              |
+         AlertPolicy
+              |
+           Alert[]
 ```
 
-The core rule is:
+Runtime components communicate through Pipeline Sentinel contracts rather than Ultralytics results,
+Torch tensors, OpenCV handles, or other provider-specific objects.
 
-```text
-detection != track != event != alert
-```
+## Production run
 
-A model saying “person here” is not the same thing as establishing that the same person persists over
-time, inferring a temporal condition, or deciding that a human operator should be notified.
-
-## Install a release artifact
-
-Versioned releases are distributed through GitHub Releases as a wheel, source distribution, and
-`SHA256SUMS.txt`. After downloading the wheel for a release, install it into an isolated environment:
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install ".\pipeline_sentinel-0.7.0-py3-none-any.whl[yolo]"
-
-pipeline-sentinel --version
-python -m pipeline_sentinel --version
-```
-
-The `yolo` extra installs the optional learned detector runtime. Core package installation without
-that extra remains useful for configuration, artifacts, tests, and non-YOLO integrations.
-
-See `docs/release.md` for checksum verification, release gates, tagging, and rollback policy.
-
-## First production-style run
-
-From a source checkout, install the optional learned runtime, validate the checked-in production
-profile, then run one video:
+From a source checkout:
 
 ```powershell
 git clone https://github.com/CCoffey2024/pipeline-sentinel.git
 cd pipeline-sentinel
 
 uv sync --extra yolo --group dev
-
 uv run pipeline-sentinel validate-config .\config\production.yaml
 
 uv run pipeline-sentinel run .\input.mp4 `
   --config .\config\production.yaml
 ```
 
-If `--output` is omitted, the application creates a unique directory under:
+If `--output` is omitted, a unique directory is created under:
 
 ```text
 outputs/runs/<UTC-timestamp>-<short-id>/
@@ -91,6 +91,7 @@ A completed run contains:
 annotated_video.mp4
 detections.csv
 tracks.csv
+anomalies.csv
 events.csv
 alerts.csv
 run_manifest.json
@@ -99,18 +100,92 @@ run_log.jsonl
 run_status.json
 ```
 
-`effective_config.json` records the validated configuration actually used plus the SHA-256 of the
-source YAML. `run_log.jsonl` records lifecycle events. `run_status.json` is written before inference
-and ends as either `completed` or `failed`, so a failed run still leaves operational evidence.
+The current production profile uses 960-pixel YOLO inference because the controlled VisDrone
+comparison materially improved person recall over 640 without the larger precision penalty observed
+at 1280. Dwell and anomaly events remain disabled until deployment-specific policy/reference evidence
+is supplied.
 
-The current `config/production.yaml` uses 960-pixel YOLO inference because the controlled VisDrone
-comparison showed a large recall improvement over 640 without the larger precision penalty observed
-at 1280. Dwell events remain disabled by default because deployment-specific behavior thresholds
-should not be silently treated as universal policy.
+See `docs/production-run.md`.
 
-See `docs/production-run.md` for the runtime contract and provenance details.
+## Notebook 06 -> anomaly scoring
 
-## Deterministic development acceptance
+v0.8 extracted the reusable idea from the DINOv2 notebook without welding the application to DINOv2:
+
+```text
+track crop -> Embedder -> vector -> normal-reference scorer -> AnomalyObservation
+```
+
+`DinoV2Embedder` is an optional adapter. Torch model loading, preprocessing, devices, and tensors stay
+inside that adapter. The rest of the application sees NumPy embeddings.
+
+Build a normal-reference artifact from curated normal crops:
+
+```powershell
+uv sync --extra dinov2 --group dev
+
+uv run pipeline-sentinel-fit-reference `
+  .\references\normal-person-crops `
+  --output .\references\person-dinov2-vits14.npz `
+  --model dinov2_vits14 `
+  --quantile 0.95
+```
+
+The baseline preserves the Notebook 06 method: cosine distance from a normal centroid with a threshold
+fitted from the normal-score quantile. One high score is evidence, not an alert;
+`ConsecutiveAnomalyEventDetector` can require repeated anomalous observations before emitting a
+`visual_anomaly` event.
+
+See `docs/anomaly-scoring.md`.
+
+## Notebook 07 -> EO/IR late fusion
+
+v0.9 promotes the stable late-fusion concept while making real-sensor assumptions explicit.
+Independent EO and IR runs are processed normally first:
+
+```text
+EO run -> Event[] ----+
+                      |
+IR run -> Event[] ----+--> TemporalConsensusFuser --> fused Event[] --> AlertPolicy
+                      |
+other sensor Event[] -+
+```
+
+Validate the fusion profile:
+
+```powershell
+uv run pipeline-sentinel validate-fusion-config .\config\fusion.yaml
+```
+
+Fuse two or more completed runs:
+
+```powershell
+uv run pipeline-sentinel fuse-runs `
+  .\outputs\runs\<eo-run-id> `
+  .\outputs\runs\<ir-run-id> `
+  --config .\config\fusion.yaml
+```
+
+A fusion run produces:
+
+```text
+fusion_events.csv
+fusion_alerts.csv
+fusion_contributors.csv
+fusion_manifest.json
+effective_fusion_config.json
+```
+
+The default strategy requires matching event types from distinct sensors within a configured time
+window. Label agreement is configurable. Pixel-space IoU is optional and must only be enabled when
+the source products are known to be registered into a common geometry.
+
+Fused confidence is deliberately left unset in v0.9 because independent EO/IR model confidences and
+anomaly scores are not assumed to be calibrated onto the same probability scale. Original values are
+retained in `fusion_contributors.csv`.
+
+See `docs/sensor-fusion.md`.
+
+## Deterministic acceptance
 
 ```powershell
 uv sync --group dev
@@ -121,99 +196,27 @@ uv build
 uv run pipeline-sentinel demo --output outputs\demo
 ```
 
-The deterministic demo creates:
-
-```text
-outputs/demo/run/
-├── annotated_video.mp4
-├── detections.csv
-├── tracks.csv
-├── events.csv
-├── alerts.csv
-└── run_manifest.json
-```
-
-The reference demo deliberately produces a `normal_maintenance` **event** that is not promoted to an
-alert, proving the event/policy boundary end to end.
-
-## Architecture
-
-```text
-encoded video -------------------+
-                                 |
-image sequence ------------------+--> FrameContext
-                                 |
-future live source --------------+
-                                      |
-                                      v
-                                  Detector
-                                      |
-                                  Detection[]
-                                      |
-                                      v
-                                   Tracker
-                                      |
-                                    Track[]
-                                      |
-                                      v
-                                EventDetector
-                                      |
-                                    Event[]
-                                      |
-                                      v
-                                  AlertPolicy
-                                      |
-                                    Alert[]
-                                      |
-                     CSV / annotated video / future API/UI
-```
-
-Runtime components communicate through Pipeline Sentinel contracts rather than provider objects.
-Ultralytics `Results`, Torch tensors, OpenCV capture handles, or future tracking-library state should
-not leak across component boundaries.
+CI does not download detector weights, DINOv2 weights, or benchmark datasets. It tests contracts,
+configuration, source adapters, detector normalization, tracking, anomaly scoring, event generation,
+fusion, policy behavior, operational artifacts, release metadata, package building, and clean-wheel
+installation with deterministic fixtures.
 
 ## Runtime contracts
 
 - `FrameRecord` — persisted ETL/provenance record.
-- `FrameContext` — in-memory frame and pixels passed through runtime components.
-- `Detection` — one framework-neutral object observation.
-- `Track` — current observation associated with a stable runtime track ID.
-- `Event` — temporal/semantic evidence derived from tracks.
-- `Alert` — a human-facing notification promoted from an event by policy.
+- `FrameContext` — in-memory frame/pixels passed through runtime components.
+- `Detection` — framework-neutral per-frame object observation.
+- `Track` — observation associated with a stable runtime track ID.
+- `AnomalyObservation` — track appearance scored relative to a normal reference.
+- `Event` — semantic/temporal evidence derived from tracks, anomaly persistence, or fusion.
+- `Alert` — human-facing notification promoted from an event by policy.
 
-See `docs/architecture.md` for the component contracts and design rules.
-
-## Baseline tracker
-
-Pipeline Sentinel ships a deterministic `IoUTracker`:
-
-- same-class one-to-one association;
-- configurable IoU threshold;
-- configurable track expiration after missed updates;
-- stable integer track IDs within a run;
-- reset between runs.
-
-It is intentionally a baseline and adapter boundary. A future ByteTrack or DeepSORT implementation
-should return the same `Track` objects so event logic does not change.
-
-## Events and alert policy
-
-Two event detectors currently exist:
-
-- `ScenarioRoleEventDetector` — deterministic adapter for known synthetic/reference scenario roles.
-  Learned detectors never receive those ground-truth semantics.
-- `DwellEventDetector` — baseline persistence/low-displacement rule for controlled learned-detector
-  experiments.
-
-`SeverityAlertPolicy` promotes events at or above a configured severity threshold.
-
-The dwell rule is useful software plumbing and a simple behavior baseline; it is **not** presented as
-mission-grade loitering analytics.
+See `docs/architecture.md`.
 
 ## Lower-level YOLO development command
 
 The config-driven `run` command is the application-facing entry point. `run-yolo` remains available
-for development experiments where explicit flags are useful:
+for explicit experiments:
 
 ```powershell
 uv run pipeline-sentinel run-yolo .\input.mp4 `
@@ -224,51 +227,12 @@ uv run pipeline-sentinel run-yolo .\input.mp4 `
   --device cpu
 ```
 
-YOLO detections are tracked by default. Without an enabled event detector, `events.csv` and
-`alerts.csv` are valid empty semantic artifacts rather than detections being silently promoted.
-
-### Explicitly enable the baseline dwell rule
-
-```powershell
-uv run pipeline-sentinel run-yolo .\input.mp4 `
-  --output outputs\yolo-dwell `
-  --model yolo26n.pt `
-  --imgsz 960 `
-  --enable-dwell-events `
-  --dwell-label person `
-  --dwell-min-hits 30 `
-  --dwell-max-displacement-px 40 `
-  --device cpu
-```
-
-Tracker controls are also explicit:
-
-```text
---tracker-iou 0.30
---tracker-max-missed 2
-```
+YOLO detections are tracked by default. Without an enabled event detector, semantic event and alert
+artifacts remain valid and empty rather than silently treating detections as mission events.
 
 ## VisDrone aerial validation
 
-VisDrone2019-VID remains the current repeatable aerial acceptance/benchmark source. Dataset bytes are
-not stored in Git.
-
-Example local layout:
-
-```text
-D:\FMV\VisDrone\VisDrone2019-VID-val\
-├── annotations\
-└── sequences\
-```
-
-Inspect the split:
-
-```powershell
-uv run pipeline-sentinel visdrone-info `
-  "D:\FMV\VisDrone\VisDrone2019-VID-val"
-```
-
-Run a 300-frame sequence sample:
+Dataset bytes are not stored in Git. Example local run:
 
 ```powershell
 uv run pipeline-sentinel run-visdrone `
@@ -281,19 +245,7 @@ uv run pipeline-sentinel run-visdrone `
   --device cpu
 ```
 
-A dataset-backed run adds `ground_truth.csv` while still producing the normal runtime artifacts:
-
-```text
-annotated_video.mp4
-detections.csv
-tracks.csv
-events.csv
-alerts.csv
-ground_truth.csv
-run_manifest.json
-```
-
-Detector-quality evaluation remains separate from tracking/event behavior:
+Evaluate saved detections separately from runtime behavior:
 
 ```powershell
 uv run pipeline-sentinel evaluate-visdrone `
@@ -301,38 +253,19 @@ uv run pipeline-sentinel evaluate-visdrone `
   --iou-threshold 0.50
 ```
 
-The evaluator writes `benchmark_summary.json`, `class_metrics.csv`, auditable `matches.csv`, and
-excluded-label evidence under `<run_dir>/benchmark/`.
+The shared evaluator reports fixed-IoU TP/FP/FN, precision, recall, F1, matched IoU, and auditable
+match/exclusion artifacts. It is explicitly not presented as the official VisDrone AP evaluator.
 
-The shared COCO/VisDrone ontology is explicit in the benchmark layer; runtime adapters preserve their
-native labels.
+## Release engineering
 
-## Testing and release philosophy
+Versioned tags drive a release workflow that validates metadata, runs lint/tests, builds the wheel and
+source distribution, generates SHA-256 checksums, installs the wheel into a clean environment,
+smoke-tests packaged configuration/CLIs, and only then creates a GitHub Release.
 
-Pipeline Sentinel separates software correctness, release integrity, and model quality.
+The first tagged production package is `v0.7.0`; later development milestones retain the same release
+gates.
 
-```text
-unit / synthetic tests
-    -> are the contracts and algorithms correct?
-
-end-to-end deterministic demo
-    -> does the complete application pipeline work?
-
-wheel/sdist + clean-install smoke test
-    -> is the software actually distributable?
-
-real YOLO + local aerial data
-    -> does the optional runtime execute correctly?
-
-benchmark evaluator
-    -> how good are the model predictions?
-```
-
-CI does not download model weights or benchmark datasets. It tests configuration validation, source
-adapters, detector normalization, tracking, event generation, policy behavior, production lifecycle
-artifacts, release metadata, packaging, and orchestration with deterministic fixtures.
-
-See `docs/testing.md` and `docs/release.md`.
+See `docs/release.md`.
 
 ## Repository map
 
@@ -340,12 +273,12 @@ See `docs/testing.md` and `docs/release.md`.
 pipeline-sentinel/
 ├── .github/workflows/       CI and tag-driven releases
 ├── benchmarks/              evaluation definitions and documentation
-├── config/                  version-controlled defaults and production profile
+├── config/                  production and fusion profiles
 ├── data/                    local staging; large data ignored
 ├── docs/                    architecture, migration, testing, operational notes
 ├── notebooks/learning/      preserved R&D / instructional work
 ├── outputs/                 generated artifacts; ignored
-├── scripts/                 developer, release, and preparation utilities
+├── scripts/                 developer/release/reference utilities
 ├── src/pipeline_sentinel/   shipped application package
 └── tests/                   deterministic automated tests
 ```
@@ -353,28 +286,23 @@ pipeline-sentinel/
 Useful documentation:
 
 - `docs/architecture.md` — runtime boundaries and contracts.
-- `docs/production-run.md` — config-driven execution, logging, and provenance.
+- `docs/production-run.md` — config-driven single-sensor execution and provenance.
+- `docs/anomaly-scoring.md` — normal-reference and DINOv2 adapter boundary.
+- `docs/sensor-fusion.md` — EO/IR late-fusion contract and assumptions.
 - `docs/release.md` — release gates, installation, checksums, and rollback.
 - `docs/migration-plan.md` — notebook-to-application extraction map.
 - `docs/testing.md` — CI and workstation acceptance.
-- `docs/yolo-adapter.md` — learned detector adapter mechanics.
-- `docs/visdrone.md` — current aerial source/benchmark workflow.
-- `benchmarks/visdrone/README.md` — shared ontology and metric policy.
+- `docs/visdrone.md` — aerial validation workflow.
 
 ## Development direction
 
-The project is no longer adding datasets merely to broaden the benchmark list. New data should be
-added only when it answers a concrete engineering or mission question.
-
-With the first production packaging/release path in place, the next application milestones are:
-
-1. extract the Notebook 06 embedder/anomaly-scoring boundary where it adds runtime value;
-2. add EO/IR evidence fusion behind stable contracts;
-3. add a service/API or operator UI only after the CLI/runtime contracts remain stable through those
-   additions.
+The notebook-derived analytical layers are now largely represented in the runtime. The next major
+step should be application delivery rather than another dataset or model experiment: stabilize v0.9,
+then add a small service/API boundary and operator-facing presentation on top of the same evidence
+contracts.
 
 ## External runtime licensing
 
-Pipeline Sentinel does not vendor Ultralytics source code or pretrained weights. The optional YOLO
-extra installs an external runtime package. Review upstream runtime/model licensing terms before
-using that backend in commercial or distributed deployments.
+Pipeline Sentinel does not vendor Ultralytics or DINOv2 source/weights. Optional runtimes and model
+weights remain external dependencies. Review their upstream licenses and model terms before commercial
+or distributed deployment.

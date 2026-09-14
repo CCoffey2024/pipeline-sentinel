@@ -34,6 +34,7 @@ jobs:
           .wheel-test/bin/python -m pipeline_sentinel --version
           .wheel-test/bin/pipeline-sentinel-fit-reference --help > /dev/null
           .wheel-test/bin/python -c "from pipeline_sentinel.config import load_production_config; c, _ = load_production_config(); assert c.detector.imgsz == 960 and c.anomaly.enabled is False"
+          .wheel-test/bin/python -c "from pipeline_sentinel.fusion import load_fusion_config; c, _ = load_fusion_config(); assert c.strategy == 'temporal_consensus' and c.min_sensors == 2"
       - name: Upload candidate distributions
         uses: actions/upload-artifact@v4
         with:
