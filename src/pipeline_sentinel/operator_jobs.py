@@ -36,9 +36,15 @@ def make_operator_job_id(kind: JobKind) -> str:
 
 
 def safe_upload_name(filename: str | None) -> str:
-    """Normalize a browser-provided filename without trusting path components."""
+    """Normalize a browser-provided filename without trusting path components.
 
-    raw = Path(filename or "input.mp4").name.strip() or "input.mp4"
+    Browsers and API clients can send either Windows- or POSIX-shaped paths regardless of the host
+    operating system. Strip both separator styles explicitly so sanitization behaves identically on
+    Windows and Linux.
+    """
+
+    supplied = (filename or "input.mp4").replace("\\", "/")
+    raw = supplied.rsplit("/", 1)[-1].strip() or "input.mp4"
     normalized = _SAFE_FILENAME.sub("_", raw)
     return normalized[:180]
 

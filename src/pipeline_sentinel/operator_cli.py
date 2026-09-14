@@ -31,7 +31,7 @@ def _parser() -> argparse.ArgumentParser:
         "--max-upload-gib",
         type=float,
         default=4.0,
-        help="Maximum uploaded video size in GiB",
+        help="Maximum browser-uploaded media request size in GiB",
     )
     parser.add_argument(
         "--open-browser",
@@ -41,7 +41,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-remote",
         action="store_true",
-        help="Explicitly allow a non-loopback bind. v0.10 has no authentication.",
+        help="Explicitly allow a non-loopback bind. The MVP has no authentication.",
     )
     return parser
 

@@ -134,8 +134,9 @@ def _fake_fusion(run_dirs, *, config_path=None, output_dir=None):
 
 
 def test_safe_upload_name_strips_browser_paths():
-    assert safe_upload_name(r"C:\fake\path\eo clip.mp4") == "C_fake_path_eo_clip.mp4"
+    assert safe_upload_name(r"C:\fake\path\eo clip.mp4") == "eo_clip.mp4"
     assert safe_upload_name("../../ir.mov") == "ir.mov"
+    assert safe_upload_name("/tmp/eo clip.mp4") == "eo_clip.mp4"
 
 
 def test_operator_run_persists_runtime_identity(monkeypatch, tmp_path):
