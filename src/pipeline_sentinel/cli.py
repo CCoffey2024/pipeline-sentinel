@@ -11,6 +11,7 @@ from .demo import run_demo
 from .detectors import GroundTruthDetector
 from .evaluation import evaluate_visdrone_run
 from .events import DwellEventDetector, ScenarioRoleEventDetector, SeverityAlertPolicy
+from .fusion import FusionConfigError, fuse_run_directories, load_fusion_config
 from .ingest import OpenCVVideoIngestAdapter
 from .operations import ProductionRunArtifacts, run_configured_video
 from .pipeline import PipelineSentinel, RunArtifacts
@@ -99,6 +100,7 @@ def _print_artifacts(artifacts: RunArtifacts) -> None:
     print(f"Annotated video: {artifacts.annotated_video}")
     print(f"Detections:      {artifacts.detections_csv}")
     print(f"Tracks:          {artifacts.tracks_csv}")
+    print(f"Anomalies:       {artifacts.anomalies_csv}")
     print(f"Events:          {artifacts.events_csv}")
     print(f"Alerts:          {artifacts.alerts_csv}")
     print(f"Run manifest:    {artifacts.run_manifest}")
@@ -144,6 +146,35 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Validate and print an effective production YAML configuration",
     )
     validate.add_argument("config", type=Path)
+
+    validate_fusion = sub.add_parser(
+        "validate-fusion-config",
+        help="Validate and print an effective late-fusion YAML configuration",
+    )
+    validate_fusion.add_argument(
+        "config",
+        type=Path,
+        nargs="?",
+        default=Path("config/fusion.yaml"),
+    )
+
+    fuse = sub.add_parser(
+        "fuse-runs",
+        help="Late-fuse events from two or more completed sensor run directories",
+    )
+    fuse.add_argument("run_dirs", type=Path, nargs="+")
+    fuse.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config/fusion.yaml"),
+        help="Validated fusion profile",
+    )
+    fuse.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Exact fusion output directory; default is outputs/fusion/<fusion-id>",
+    )
 
     demo = sub.add_parser("demo", help="Run deterministic synthetic end-to-end smoke test")
     demo.add_argument("--output", type=Path, default=Path("outputs/demo"))
@@ -251,6 +282,7 @@ def main() -> int:
             return 2
         _print_production_artifacts(production_artifacts)
         return 0
+
     if args.command == "validate-config":
         try:
             config, provenance = load_production_config(args.config)
@@ -269,6 +301,45 @@ def main() -> int:
             )
         )
         return 0
+
+    if args.command == "validate-fusion-config":
+        try:
+            config, provenance = load_fusion_config(args.config)
+        except (FusionConfigError, FileNotFoundError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        print(
+            json.dumps(
+                {
+                    "valid": True,
+                    "config_source": str(provenance.path),
+                    "config_sha256": provenance.sha256,
+                    "effective_config": config.to_dict(),
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "fuse-runs":
+        try:
+            fusion = fuse_run_directories(
+                args.run_dirs,
+                config_path=args.config,
+                output_dir=args.output,
+            )
+        except (FusionConfigError, FileNotFoundError, ValueError, RuntimeError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        print(f"Fusion ID:       {fusion.fusion_id}")
+        print(f"Output directory:{' '}{fusion.output_dir}")
+        print(f"Fused events:    {fusion.events_csv}")
+        print(f"Fused alerts:    {fusion.alerts_csv}")
+        print(f"Contributors:    {fusion.contributors_csv}")
+        print(f"Fusion manifest: {fusion.manifest_json}")
+        print(f"Effective config:{' '}{fusion.effective_config_json}")
+        return 0
+
     if args.command == "demo":
         artifacts = run_demo(
             args.output,
@@ -301,7 +372,6 @@ def main() -> int:
         except YoloDependencyError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
-
         pipeline = _make_learned_pipeline(detector, args)
         artifacts = pipeline.run_video(
             args.video,
@@ -333,9 +403,7 @@ def main() -> int:
         ground_truth_rows: int | None = None
         if sequence.annotation_path is not None:
             ground_truth_path = output_dir / "ground_truth.csv"
-            ground_truth = sequence.normalized_ground_truth(
-                frame_numbers=selected_frame_numbers,
-            )
+            ground_truth = sequence.normalized_ground_truth(frame_numbers=selected_frame_numbers)
             ground_truth.to_csv(ground_truth_path, index=False)
             ground_truth_rows = len(ground_truth)
 
