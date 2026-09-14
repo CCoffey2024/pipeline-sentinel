@@ -12,6 +12,20 @@ tracker:
   iou_threshold: 0.30
   max_missed_updates: 2
 
+anomaly:
+  enabled: false
+  backend: dinov2
+  reference_path: null
+  model: dinov2_vits14
+  device: null
+  labels:
+    - person
+  min_track_hits: 3
+  pad_px: 6
+  min_crop_size: 12
+  event_min_consecutive: 3
+  event_severity: warning
+
 events:
   dwell:
     enabled: false
