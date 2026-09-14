@@ -8,6 +8,8 @@ dynamic = ["version"]
 description = "A modular computer-vision application for ingest, detection, tracking, anomaly scoring, event generation, sensor fusion, and human-facing alerts."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
   { name = "Chris Coffey" }
 ]
@@ -29,7 +31,6 @@ operator = [
   "fastapi>=0.116,<1",
   "python-multipart>=0.0.20,<1",
   "uvicorn>=0.35,<1",
-  "ultralytics-opencv-headless>=8.4.147,<9",
 ]
 
 [project.urls]

@@ -57,11 +57,12 @@ From a source checkout on Windows, double-click:
 start-operator.cmd
 ```
 
-The launcher synchronizes the operator dependencies, starts the local service, and opens the browser.
-The equivalent command is:
+The development launcher synchronizes the operator shell plus the optional YOLO backend used by the
+current production profile, starts the local service, and opens the browser. The equivalent command
+is:
 
 ```powershell
-uv sync --extra operator --group dev
+uv sync --extra operator --extra yolo --group dev
 uv run pipeline-sentinel-operator --open-browser
 ```
 
@@ -112,12 +113,22 @@ Core package:
 python -m pip install .\pipeline_sentinel-0.12.0-py3-none-any.whl
 ```
 
-Operator application, including the local web service and YOLO runtime:
+Operator application shell:
 
 ```powershell
 python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator]"
 pipeline-sentinel-operator --open-browser
 ```
+
+The `operator` extra intentionally does **not** install Ultralytics. The current production detector is
+an optional YOLO provider. To use it, opt in separately:
+
+```powershell
+python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator,yolo]"
+```
+
+The optional Ultralytics runtime and its model weights are not covered by Pipeline Sentinel's
+Apache-2.0 license; their upstream license terms remain in force. See `THIRD_PARTY_NOTICES.md`.
 
 DINOv2 remains a separate optional extra because anomaly scoring is disabled in the shipped
 production profile until a fitted normal-reference artifact is supplied.
@@ -356,6 +367,8 @@ pipeline-sentinel/
 ├── config/                  production and fusion profiles
 ├── data/                    local staging; large data ignored
 ├── docs/                    architecture, migration, testing, operational notes
+├── LICENSE                  Apache License 2.0 for Pipeline Sentinel
+├── THIRD_PARTY_NOTICES.md   external dependency/model licensing notes
 ├── notebooks/learning/      preserved R&D / instructional work
 ├── outputs/                 generated artifacts; ignored
 ├── scripts/                 developer/release/reference utilities
@@ -389,8 +402,11 @@ Generic image-folder ingest does not perform raw/radiometric thermal calibration
 proprietary camera containers/codecs may still fail at the underlying decode layer. See
 `docs/mvp-acceptance.md` for the explicit test boundary and known limitations.
 
-## External runtime licensing
+## License and external runtimes
 
-Pipeline Sentinel does not vendor Ultralytics or DINOv2 source/weights. Optional runtimes and model
-weights remain external dependencies. Review their upstream licenses and model terms before commercial
-or distributed deployment.
+Pipeline Sentinel's own source code is licensed under the Apache License 2.0. Optional third-party
+model runtimes, weights, and datasets retain their upstream licenses. In particular, the standard
+`operator` extra intentionally excludes Ultralytics; the `yolo` extra is an explicit opt-in provider
+for users who choose to accept its applicable upstream terms.
+
+See `LICENSE` and `THIRD_PARTY_NOTICES.md`.

@@ -11,7 +11,8 @@ if errorlevel 1 (
 )
 
 echo Preparing Pipeline Sentinel operator console...
-uv sync --extra operator --group dev
+echo Development launcher includes the optional Ultralytics YOLO backend.
+uv sync --extra operator --extra yolo --group dev
 if errorlevel 1 (
   echo.
   echo Dependency setup failed.

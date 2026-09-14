@@ -41,13 +41,15 @@ media when the underlying encoded file/image format is supported.
 
 ## Install the release candidate on Windows
 
-Create a clean virtual environment and install the wheel with the operator extra:
+Create a clean virtual environment. The Apache-licensed operator shell is the `operator` extra; this
+acceptance procedure also opts into the separate YOLO provider because the current production profile
+uses it:
 
 ```powershell
 py -m venv .venv-mvp
 .\.venv-mvp\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator]"
+python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator,yolo]"
 
 pipeline-sentinel --version
 pipeline-sentinel-operator --version
@@ -55,9 +57,10 @@ pipeline-sentinel-operator --version
 
 Both commands should report `0.12.0`.
 
-The operator extra installs the local web service and the learned detector runtime. Model weights are
-not vendored in the release artifact; the configured model may need to be obtained by its upstream
-runtime on first use.
+The `operator` extra itself does not install Ultralytics. The `yolo` extra is an explicit optional
+provider and remains subject to its upstream license terms. Model weights are not vendored in the
+release artifact; the configured model may need to be obtained by its upstream runtime on first use.
+See `THIRD_PARTY_NOTICES.md`.
 
 ## Launch acceptance
 
@@ -176,6 +179,7 @@ Before a v0.12 release is tagged, CI must pass:
 - packaged configuration/UI/source-adapter smoke tests;
 - Windows test-suite execution;
 - clean Windows installation of the wheel with `[operator]`;
+- verification that `[operator]` does not install Ultralytics;
 - import/route smoke test of the installed operator service.
 
 The tag-driven release workflow repeats lint/tests/build and clean-installs both the core wheel and
