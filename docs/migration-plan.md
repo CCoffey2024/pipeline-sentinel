@@ -13,8 +13,8 @@ behavior into `src/pipeline_sentinel/`.
 | 03 — HOG/SVM → MobileNet | crop classification and lightweight CNN comparison | future `classifiers.py` | notebook-only |
 | 04 — Object detection | detector contract and optional YOLO backend | `detectors.py`, `yolo.py`, CLI | **v0.2 extracted** |
 | 05 — Tracking and events | temporal association, event generation, alert promotion | `tracking.py`, `events.py`, `pipeline.py` | **v0.5 extracted** |
-| 06 — DINOv2 anomaly detection | representation learning and anomaly scoring | future `embeddings.py`, `anomaly.py` | next domain extraction candidate |
-| 07 — EO + IR fusion | modality alignment and fused evidence | future `fusion.py` | notebook-only |
+| 06 — DINOv2 anomaly detection | representation learning and anomaly scoring | `embeddings.py`, `anomaly.py`, `reference.py` | **v0.8 extracted** |
+| 07 — EO + IR fusion | aligned synthetic streams and late fusion | `fusion.py`, fusion config/CLI | **v0.9 extracted** |
 | 08 — Model bakeoff | comparative evaluation | `benchmarks/`, `evaluation.py`, dataset adapters | **v0.3–v0.4 core extracted** |
 | 09 — End-to-end demo | complete walkthrough | `pipeline.py`, CLI, integration tests | runtime orchestration extracted |
 
@@ -35,7 +35,7 @@ identify durable idea
     -> define stable input/output contracts
     -> extract smallest reusable component
     -> unit test it
-    -> integration test it behind PipelineSentinel
+    -> integration test it behind Pipeline Sentinel
     -> keep notebook as explanation/experiment rather than second implementation
 ```
 
@@ -80,8 +80,6 @@ mission question.
 Notebook 05 supplied the temporal boundary that turns per-frame object observations into persistent
 runtime state and then into semantic evidence.
 
-The shipped flow is now:
-
 ```text
 FrameContext
     -> Detector
@@ -94,56 +92,85 @@ FrameContext
     -> Alert[]
 ```
 
-### `Track`
-
-A normalized track carries a stable runtime `track_id`, current box/class/confidence, observation
-count, and first-seen frame/time. It contains no ByteTrack/DeepSORT/provider object.
-
-### `IoUTracker`
-
-The first tracker is deliberately deterministic and small: same-class greedy IoU matching with
+`IoUTracker` is deliberately deterministic and small: same-class greedy IoU matching with
 configurable association threshold and expiration. It is a software baseline and replacement point,
 not a claim of best multi-object tracking quality.
 
-### `Event`
-
-An event is explicit temporal/semantic evidence. It is not a detection and it is not yet a human
-notification.
-
 `ScenarioRoleEventDetector` preserves deterministic reference behavior without teaching learned
-models synthetic ground-truth semantics. `DwellEventDetector` provides a real learned-detector path
-for controlled persistence/low-displacement experiments.
+models synthetic ground-truth semantics. `DwellEventDetector` provides a learned-detector path for
+controlled persistence/low-displacement experiments.
 
-### `Alert`
-
-`SeverityAlertPolicy` promotes only events meeting policy threshold. The deterministic demo therefore
-contains `normal_maintenance` in `events.csv` but not `alerts.csv`.
-
-That gives the project an executable proof of:
+`SeverityAlertPolicy` promotes only events meeting policy threshold. This gives the project an
+executable proof of:
 
 ```text
 detection != track != event != alert
 ```
 
-## Notebook 06 — next likely domain extraction
+## Notebook 06 — anomaly scoring extracted in v0.8
 
-Representation generation and anomaly scoring should remain distinct:
+The stable idea was not “put DINOv2 in the pipeline.” It was the separation of representation from
+anomaly policy:
 
 ```text
-crop/image -> Embedder -> vector
-reference vectors + vector -> AnomalyScorer -> score / decision
+track crop
+    -> Embedder
+    -> vector
+    -> normal-reference scorer
+    -> AnomalyObservation
+    -> persistence event logic
+    -> Event
 ```
 
-`HOGEmbedder` and `DinoV2Embedder` should eventually satisfy the same representation interface. The
-anomaly scorer should operate on vectors rather than import DINOv2 directly.
+The package therefore owns an `Embedder` protocol and a lazy `DinoV2Embedder` adapter rather than
+allowing Torch tensors to cross component boundaries.
 
-The exact extraction should now be judged against the shippable application: add it only where it
-creates runtime value rather than reproducing notebook material for completeness.
+The Notebook-06 normal centroid + cosine-distance + fitted quantile threshold became a versioned
+reference artifact. Runtime scoring produces `AnomalyObservation` evidence, not an alert. Persistent
+anomaly evidence can become a `visual_anomaly` event, after which ordinary alert policy applies.
 
-## Notebook 07 — fusion
+DINOv2 remains optional; the core package can be installed, configured, tested, and released without
+Torch.
 
-EO/IR fusion becomes a domain component once track/event evidence and modality alignment rules are
-stable. Sensor-specific preprocessing remains at the edge; fused evidence should use common contracts.
+## Notebook 07 — EO/IR fusion extracted in v0.9
+
+The learning sequence described Notebook 07 as aligned synthetic EO/IR streams plus late fusion. The
+production extraction preserves **late fusion** while removing the unsafe assumption that arbitrary
+real sensor pixels are automatically aligned.
+
+The shipped path is:
+
+```text
+EO run -> Event[] ----+
+                      |
+IR run -> Event[] ----+--> TemporalConsensusFuser --> fused Event[] --> AlertPolicy
+                      |
+other sensor Event[] -+
+```
+
+Fusion consumes normalized semantic events from completed sensor runs. It requires distinct sensor
+IDs, matching event types, a configurable temporal tolerance, and an explicit minimum number of
+supporting sensors. Label agreement is configurable.
+
+Pixel-space IoU is an optional gate. Enabling it explicitly asserts that the sensor products have
+already been registered into a common geometry. With the default `null` spatial threshold, the fuser
+makes no image-registration claim.
+
+The fusion layer deliberately does **not** average source confidences. Independent EO/IR models and
+anomaly scores are not assumed to be calibrated onto one probability scale. Contributor confidence
+values remain in the audit artifact, while the fused event confidence stays unset.
+
+This produces a separate evidence package:
+
+```text
+fusion_events.csv
+fusion_alerts.csv
+fusion_contributors.csv
+fusion_manifest.json
+effective_fusion_config.json
+```
+
+See `docs/sensor-fusion.md`.
 
 ## Notebook 09 — end-to-end walkthrough
 
@@ -152,8 +179,8 @@ on Jupyter:
 
 ```powershell
 uv run pipeline-sentinel demo
-uv run pipeline-sentinel run-yolo <video>
-uv run pipeline-sentinel run-visdrone <dataset-root>
+uv run pipeline-sentinel run <video>
+uv run pipeline-sentinel fuse-runs <run-a> <run-b>
 ```
 
 The notebook should increasingly become a thin consumer of package APIs rather than contain a second
@@ -177,5 +204,5 @@ Those are not bad code; they simply serve a different purpose.
 
 A notebook component is migrated when its public inputs/outputs are explicit, provider-specific
 objects do not leak across boundaries, automated tests cover behavior and failure modes, it runs
-outside Jupyter, the deterministic end-to-end demo passes, and the notebook no longer acts as the
+outside Jupyter, the deterministic end-to-end path passes, and the notebook no longer acts as the
 only implementation.
