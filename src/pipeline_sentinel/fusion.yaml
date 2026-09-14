@@ -1,0 +1,8 @@
+strategy: temporal_consensus
+max_time_delta_s: 0.50
+min_sensors: 2
+require_matching_label: true
+# Leave null unless input sensor products are registered into the same pixel geometry.
+spatial_iou_threshold: null
+alerts:
+  minimum_severity: warning
