@@ -14,6 +14,22 @@ tracker:
   iou_threshold: 0.30
   max_missed_updates: 2
 
+anomaly:
+  # Disabled until a deployment provides a curated normal-reference artifact.
+  enabled: false
+  backend: dinov2
+  reference_path: null
+  model: dinov2_vits14
+  device: null
+  labels:
+    - person
+  min_track_hits: 3
+  pad_px: 6
+  min_crop_size: 12
+  # An embedding excursion is evidence; require persistence before generating an event.
+  event_min_consecutive: 3
+  event_severity: warning
+
 events:
   dwell:
     # Disabled by default until a deployment has mission-specific dwell thresholds.

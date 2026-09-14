@@ -2,6 +2,24 @@
 
 All notable changes to Pipeline Sentinel are documented here. Versions use semantic versioning.
 
+## [0.8.0] - 2026-09-13
+
+### Added
+- framework-neutral `Embedder` and anomaly-analysis contracts;
+- optional DINOv2 representation adapter behind the embedder boundary;
+- persisted normal-activity centroid/threshold reference artifacts;
+- `pipeline-sentinel-fit-reference` reference-building command for curated normal crops;
+- track-crop anomaly scoring with cosine distance from a normal centroid;
+- `AnomalyObservation` runtime evidence contract and `anomalies.csv` run artifact;
+- persistence-gated visual-anomaly event generation before alert policy;
+- strict anomaly runtime configuration, disabled by default;
+- deterministic tests for reference fitting, scoring, persistence, and end-to-end anomaly event promotion.
+
+### Changed
+- runtime flow now supports Detection -> Track -> AnomalyObservation -> Event -> Alert without treating a raw anomaly score as an alert;
+- package version advanced to `0.8.0`;
+- the DINOv2/Torch runtime remains optional so standard installs do not import or install the heavy representation backend.
+
 ## [0.7.0] - 2026-09-13
 
 ### Added

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import Protocol
 
-from .types import Alert, Event, FrameContext, Severity, Track
+from .types import Alert, AnomalyObservation, Event, FrameContext, Severity, Track
 
 
 class EventDetector(Protocol):
@@ -14,6 +14,20 @@ class EventDetector(Protocol):
     def reset(self) -> None: ...
 
     def update(self, frame: FrameContext, tracks: list[Track]) -> list[Event]: ...
+
+
+class AnomalyEventDetector(Protocol):
+    """Convert anomaly observations into semantic events."""
+
+    name: str
+
+    def reset(self) -> None: ...
+
+    def update(
+        self,
+        frame: FrameContext,
+        anomalies: list[AnomalyObservation],
+    ) -> list[Event]: ...
 
 
 class AlertPolicy(Protocol):
@@ -145,6 +159,82 @@ class DwellEventDetector:
                         "duration_s": track.duration_s,
                         "max_displacement_px": maximum,
                         "configured_max_displacement_px": self.max_displacement_px,
+                    },
+                )
+            )
+        return events
+
+
+class ConsecutiveAnomalyEventDetector:
+    """Promote persistent unusual observations into an event.
+
+    A single embedding-distance excursion remains evidence, not an alert. Requiring consecutive
+    anomalous observations keeps the Notebook-06 score separate from the event policy that decides
+    when unusual visual evidence is operationally meaningful.
+    """
+
+    name = "consecutive_anomaly"
+
+    def __init__(
+        self,
+        *,
+        min_consecutive: int = 3,
+        severity: Severity = "warning",
+    ) -> None:
+        if min_consecutive < 1:
+            raise ValueError("min_consecutive must be positive")
+        self.min_consecutive = int(min_consecutive)
+        self.severity = severity
+        self._counts: dict[int, int] = {}
+        self._emitted: set[int] = set()
+
+    def reset(self) -> None:
+        self._counts.clear()
+        self._emitted.clear()
+
+    def update(
+        self,
+        frame: FrameContext,
+        anomalies: list[AnomalyObservation],
+    ) -> list[Event]:
+        seen = {observation.track_id for observation in anomalies}
+        for track_id in list(self._counts):
+            if track_id not in seen:
+                self._counts.pop(track_id, None)
+
+        events: list[Event] = []
+        for observation in anomalies:
+            if observation.is_anomaly:
+                count = self._counts.get(observation.track_id, 0) + 1
+                self._counts[observation.track_id] = count
+            else:
+                self._counts[observation.track_id] = 0
+                continue
+
+            if observation.track_id in self._emitted or count < self.min_consecutive:
+                continue
+            self._emitted.add(observation.track_id)
+            events.append(
+                Event(
+                    event_id=f"visual_anomaly:{observation.track_id}",
+                    frame_number=frame.frame_number,
+                    timestamp_s=frame.timestamp_s,
+                    event_type="visual_anomaly",
+                    severity=self.severity,
+                    source=self.name,
+                    message=(
+                        f"Track {observation.track_id} exceeded the normal-activity anomaly "
+                        f"threshold for {count} consecutive scored observations."
+                    ),
+                    track_id=observation.track_id,
+                    label=observation.label,
+                    confidence=None,
+                    metadata={
+                        "score": observation.score,
+                        "threshold": observation.threshold,
+                        "margin": observation.margin,
+                        "consecutive_observations": count,
+                        "anomaly_source": observation.source,
                     },
                 )
             )

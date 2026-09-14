@@ -11,10 +11,11 @@ import cv2
 import pandas as pd
 
 from . import __version__
+from .anomaly import AnomalyAnalyzer
 from .detectors import Detector
-from .events import AlertPolicy, EventDetector, SeverityAlertPolicy
+from .events import AlertPolicy, AnomalyEventDetector, EventDetector, SeverityAlertPolicy
 from .tracking import IoUTracker, Tracker
-from .types import Alert, Detection, Event, FrameContext, Modality, Track
+from .types import Alert, AnomalyObservation, Detection, Event, FrameContext, Modality, Track
 
 DETECTION_COLUMNS = [
     "frame_number",
@@ -52,6 +53,21 @@ TRACK_COLUMNS = [
     "x2",
     "y2",
 ]
+ANOMALY_COLUMNS = [
+    "frame_number",
+    "timestamp_s",
+    "track_id",
+    "label",
+    "score",
+    "threshold",
+    "margin",
+    "is_anomaly",
+    "source",
+    "sensor_id",
+    "modality",
+    "source_path",
+    "metadata",
+]
 EVENT_COLUMNS = [
     "event_id",
     "frame_number",
@@ -86,6 +102,7 @@ class RunArtifacts:
     annotated_video: Path
     detections_csv: Path
     tracks_csv: Path
+    anomalies_csv: Path
     events_csv: Path
     alerts_csv: Path
     run_manifest: Path
@@ -135,6 +152,27 @@ def _track_row(track: Track, frame: FrameContext) -> dict[str, object]:
     }
 
 
+def _anomaly_row(
+    observation: AnomalyObservation,
+    frame: FrameContext,
+) -> dict[str, object]:
+    return {
+        "frame_number": observation.frame_number,
+        "timestamp_s": observation.timestamp_s,
+        "track_id": observation.track_id,
+        "label": observation.label,
+        "score": observation.score,
+        "threshold": observation.threshold,
+        "margin": observation.margin,
+        "is_anomaly": observation.is_anomaly,
+        "source": observation.source,
+        "sensor_id": frame.sensor_id,
+        "modality": frame.modality,
+        "source_path": str(frame.source_path) if frame.source_path else None,
+        "metadata": json.dumps(observation.metadata, sort_keys=True),
+    }
+
+
 def _event_row(event: Event) -> dict[str, object]:
     return {
         "event_id": event.event_id,
@@ -169,19 +207,23 @@ def _alert_row(alert: Alert) -> dict[str, object]:
 
 
 class PipelineSentinel:
-    """Orchestrate framework-neutral detector, tracker, event, and alert components."""
+    """Orchestrate detector, tracker, anomaly, event, and alert components."""
 
     def __init__(
         self,
         detector: Detector,
         *,
         tracker: Tracker | None = None,
+        anomaly_analyzer: AnomalyAnalyzer | None = None,
         event_detector: EventDetector | None = None,
+        anomaly_event_detector: AnomalyEventDetector | None = None,
         alert_policy: AlertPolicy | None = None,
     ) -> None:
         self.detector = detector
         self.tracker = tracker or IoUTracker()
+        self.anomaly_analyzer = anomaly_analyzer
         self.event_detector = event_detector
+        self.anomaly_event_detector = anomaly_event_detector
         self.alert_policy = alert_policy or SeverityAlertPolicy()
 
     def run_frames(
@@ -207,8 +249,12 @@ class PipelineSentinel:
             raise ValueError("frame source yielded zero frames")
 
         self.tracker.reset()
+        if self.anomaly_analyzer is not None:
+            self.anomaly_analyzer.reset()
         if self.event_detector is not None:
             self.event_detector.reset()
+        if self.anomaly_event_detector is not None:
+            self.anomaly_event_detector.reset()
 
         width, height = first.width, first.height
         annotated_video = output_dir / "annotated_video.mp4"
@@ -223,6 +269,7 @@ class PipelineSentinel:
 
         detection_rows: list[dict[str, object]] = []
         track_rows: list[dict[str, object]] = []
+        anomaly_rows: list[dict[str, object]] = []
         event_rows: list[dict[str, object]] = []
         alert_rows: list[dict[str, object]] = []
         unique_track_ids: set[int] = set()
@@ -245,11 +292,18 @@ class PipelineSentinel:
                 track_rows.extend(_track_row(track, frame) for track in tracks)
                 unique_track_ids.update(track.track_id for track in tracks)
 
-                events = (
-                    self.event_detector.update(frame, tracks)
-                    if self.event_detector is not None
+                anomalies = (
+                    self.anomaly_analyzer.update(frame, tracks)
+                    if self.anomaly_analyzer is not None
                     else []
                 )
+                anomaly_rows.extend(_anomaly_row(observation, frame) for observation in anomalies)
+
+                events: list[Event] = []
+                if self.event_detector is not None:
+                    events.extend(self.event_detector.update(frame, tracks))
+                if self.anomaly_event_detector is not None:
+                    events.extend(self.anomaly_event_detector.update(frame, anomalies))
                 event_rows.extend(_event_row(event) for event in events)
 
                 frame_alerts: list[Alert] = []
@@ -261,20 +315,20 @@ class PipelineSentinel:
                 alert_track_ids = {
                     alert.track_id for alert in frame_alerts if alert.track_id is not None
                 }
+                anomalous_track_ids = {
+                    observation.track_id for observation in anomalies if observation.is_anomaly
+                }
 
                 rendered = frame.image.copy()
                 for track in tracks:
                     x1, y1, x2, y2 = track.xyxy
                     is_alert = track.track_id in alert_track_ids
+                    is_anomaly = track.track_id in anomalous_track_ids
                     box_value = (255, 255, 255) if is_alert else (180, 180, 180)
-                    cv2.rectangle(
-                        rendered,
-                        (x1, y1),
-                        (x2, y2),
-                        box_value,
-                        3 if is_alert else 2,
-                    )
-                    text = f"#{track.track_id} {track.label} {track.confidence:.2f}"
+                    thickness = 3 if (is_alert or is_anomaly) else 2
+                    cv2.rectangle(rendered, (x1, y1), (x2, y2), box_value, thickness)
+                    suffix = " ANOM" if is_anomaly else ""
+                    text = f"#{track.track_id} {track.label} {track.confidence:.2f}{suffix}"
                     cv2.putText(
                         rendered,
                         text,
@@ -298,6 +352,9 @@ class PipelineSentinel:
         tracks_csv = output_dir / "tracks.csv"
         pd.DataFrame(track_rows, columns=TRACK_COLUMNS).to_csv(tracks_csv, index=False)
 
+        anomalies_csv = output_dir / "anomalies.csv"
+        pd.DataFrame(anomaly_rows, columns=ANOMALY_COLUMNS).to_csv(anomalies_csv, index=False)
+
         events_csv = output_dir / "events.csv"
         pd.DataFrame(event_rows, columns=EVENT_COLUMNS).to_csv(events_csv, index=False)
 
@@ -316,7 +373,13 @@ class PipelineSentinel:
                     "modality": first.modality,
                     "detector_backend": self.detector.name,
                     "tracker_backend": self.tracker.name,
+                    "anomaly_analyzer": (
+                        self.anomaly_analyzer.name if self.anomaly_analyzer else None
+                    ),
                     "event_detector": self.event_detector.name if self.event_detector else None,
+                    "anomaly_event_detector": (
+                        self.anomaly_event_detector.name if self.anomaly_event_detector else None
+                    ),
                     "alert_policy": self.alert_policy.name,
                     "frames_processed": frames_processed,
                     "first_frame_number": first_frame_number,
@@ -324,6 +387,8 @@ class PipelineSentinel:
                     "detections_emitted": len(detection_rows),
                     "track_observations_emitted": len(track_rows),
                     "unique_tracks": len(unique_track_ids),
+                    "anomaly_observations_emitted": len(anomaly_rows),
+                    "anomalies_flagged": sum(bool(row["is_anomaly"]) for row in anomaly_rows),
                     "events_emitted": len(event_rows),
                     "alerts_emitted": len(alert_rows),
                     "render_fps": float(render_fps),
@@ -332,6 +397,7 @@ class PipelineSentinel:
                         "annotated_video": str(annotated_video),
                         "detections_csv": str(detections_csv),
                         "tracks_csv": str(tracks_csv),
+                        "anomalies_csv": str(anomalies_csv),
                         "events_csv": str(events_csv),
                         "alerts_csv": str(alerts_csv),
                     },
@@ -345,6 +411,7 @@ class PipelineSentinel:
             annotated_video=annotated_video,
             detections_csv=detections_csv,
             tracks_csv=tracks_csv,
+            anomalies_csv=anomalies_csv,
             events_csv=events_csv,
             alerts_csv=alerts_csv,
             run_manifest=run_manifest,
