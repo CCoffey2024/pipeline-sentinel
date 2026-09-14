@@ -15,6 +15,7 @@ from . import __version__
 from .anomaly import AnomalyAnalyzer
 from .detectors import Detector
 from .events import AlertPolicy, AnomalyEventDetector, EventDetector, SeverityAlertPolicy
+from .frame_geometry import FrameGeometryNormalizer
 from .tracking import IoUTracker, Tracker
 from .types import Alert, AnomalyObservation, Detection, Event, FrameContext, Modality, Track
 
@@ -349,6 +350,7 @@ class PipelineSentinel:
             self.anomaly_event_detector.reset()
 
         width, height = first.width, first.height
+        geometry = FrameGeometryNormalizer.from_frame(first)
         annotated_video = output_dir / "annotated_video.mp4"
         detections_csv = output_dir / "detections.csv"
         tracks_csv = output_dir / "tracks.csv"
@@ -394,11 +396,7 @@ class PipelineSentinel:
 
         try:
             for frame in chain([first], iterator):
-                if frame.width != width or frame.height != height:
-                    raise ValueError(
-                        "all frames in one run must have the same dimensions; "
-                        f"expected {width}x{height}, got {frame.width}x{frame.height}"
-                    )
+                frame = geometry.normalize(frame)
 
                 detections = list(self.detector.detect(frame))
                 for detection in detections:
@@ -464,6 +462,7 @@ class PipelineSentinel:
 
         metadata = dict(run_metadata or {})
         metadata.setdefault("evidence_write_mode", "streaming_csv")
+        metadata["frame_normalization"] = geometry.provenance()
         run_manifest = output_dir / "run_manifest.json"
         run_manifest.write_text(
             json.dumps(
