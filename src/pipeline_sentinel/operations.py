@@ -4,10 +4,11 @@ import json
 import platform
 import sys
 import uuid
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from . import __version__
 from .anomaly import AnomalyReference, TrackCropAnomalyAnalyzer
@@ -16,6 +17,7 @@ from .embeddings import DinoV2Embedder
 from .events import ConsecutiveAnomalyEventDetector, DwellEventDetector, SeverityAlertPolicy
 from .pipeline import PipelineSentinel, RunArtifacts
 from .tracking import IoUTracker
+from .types import FrameContext
 from .yolo import YoloDetector
 
 
@@ -158,18 +160,13 @@ def _add_operational_provenance(
     artifacts.run_manifest.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-def run_configured_video(
-    video_path: Path,
-    config_path: Path,
+def _run_configured_source(
     *,
-    output_dir: Path | None = None,
+    input_source: str,
+    config_path: Path,
+    output_dir: Path | None,
+    execute: Callable[[PipelineSentinel, ProductionConfig, Path], RunArtifacts],
 ) -> ProductionRunArtifacts:
-    """Execute one auditable config-driven production-style video run."""
-
-    video = Path(video_path).expanduser().resolve()
-    if not video.is_file():
-        raise FileNotFoundError(video)
-
     config, provenance = load_production_config(config_path)
     run_id = make_run_id()
     resolved_output = (
@@ -200,7 +197,7 @@ def run_configured_video(
         "status": "running",
         "started_at_utc": started_at,
         "completed_at_utc": None,
-        "input_source": str(video),
+        "input_source": input_source,
         "output_dir": str(resolved_output),
         "config_source": str(provenance.path),
         "config_sha256": provenance.sha256,
@@ -211,7 +208,7 @@ def run_configured_video(
         run_log_jsonl,
         event="run_started",
         run_id=run_id,
-        input_source=str(video),
+        input_source=input_source,
         output_dir=str(resolved_output),
         config_sha256=provenance.sha256,
         version=__version__,
@@ -219,12 +216,7 @@ def run_configured_video(
 
     try:
         pipeline = _build_pipeline(config, config_source=provenance.path)
-        artifacts = pipeline.run_video(
-            video,
-            resolved_output,
-            sensor_id=config.runtime.sensor_id,
-            modality=config.runtime.modality,
-        )
+        artifacts = execute(pipeline, config, resolved_output)
         completed_at = utc_now()
         _add_operational_provenance(
             artifacts,
@@ -290,4 +282,63 @@ def run_configured_video(
         run_log_jsonl=run_log_jsonl,
         run_status_json=run_status_json,
         pipeline=artifacts,
+    )
+
+
+def run_configured_video(
+    video_path: Path,
+    config_path: Path,
+    *,
+    output_dir: Path | None = None,
+) -> ProductionRunArtifacts:
+    """Execute one auditable config-driven encoded-video run."""
+
+    video = Path(video_path).expanduser().resolve()
+    if not video.is_file():
+        raise FileNotFoundError(video)
+
+    return _run_configured_source(
+        input_source=str(video),
+        config_path=config_path,
+        output_dir=output_dir,
+        execute=lambda pipeline, config, resolved_output: pipeline.run_video(
+            video,
+            resolved_output,
+            sensor_id=config.runtime.sensor_id,
+            modality=config.runtime.modality,
+        ),
+    )
+
+
+def run_configured_frames(
+    frames: Iterable[FrameContext],
+    config_path: Path,
+    *,
+    source_name: str,
+    render_fps: float,
+    output_dir: Path | None = None,
+    run_metadata: Mapping[str, Any] | None = None,
+) -> ProductionRunArtifacts:
+    """Execute one auditable production run over a lazy frame stream.
+
+    The iterable is consumed exactly once. This is the application entry point for image sequences
+    and other sources that should be read in place rather than converted or copied into encoded video.
+    """
+
+    if render_fps <= 0:
+        raise ValueError("render_fps must be positive")
+    metadata = dict(run_metadata or {})
+    metadata.setdefault("source_access", "streamed_in_place")
+
+    return _run_configured_source(
+        input_source=source_name,
+        config_path=config_path,
+        output_dir=output_dir,
+        execute=lambda pipeline, _config, resolved_output: pipeline.run_frames(
+            frames,
+            resolved_output,
+            render_fps=render_fps,
+            source_name=source_name,
+            run_metadata=metadata,
+        ),
     )
