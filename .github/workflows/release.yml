@@ -71,7 +71,16 @@ jobs:
           .operator-release-test/bin/pipeline-sentinel-operator --version | grep "${VERSION}"
           .operator-release-test/bin/python -c "import importlib.util; assert importlib.util.find_spec('ultralytics') is None, 'operator extra must not install Ultralytics'"
           .operator-release-test/bin/python -c "from pathlib import Path; import pipeline_sentinel; p=Path(pipeline_sentinel.__file__).parent / 'web'; assert (p / 'operator.html').is_file() and (p / 'local-sources.js').is_file() and (p / 'results-console.js').is_file()"
-          .operator-release-test/bin/python -c "from pathlib import Path; from pipeline_sentinel.service import create_app; app=create_app(workspace=Path('.operator-release-smoke')); paths={getattr(r, 'path', None) for r in app.routes}; assert '/api/jobs/media' in paths; assert '/api/jobs/local-sequence' in paths; app.state.job_manager.close()"
+          .operator-release-test/bin/python -c "from pathlib import Path; from pipeline_sentinel.service import create_app; app=create_app(workspace=Path('.operator-release-smoke')); paths={getattr(r, 'path', None) for r in app.routes}; assert '/api/jobs/media' in paths; assert '/api/jobs/local-sequence' in paths; assert '/api/jobs/{job_id}/preview-frame' in paths; app.state.job_manager.close()"
+
+      - name: Verify shipment documentation
+        shell: bash
+        run: |
+          test -s TESTER-QUICKSTART.md
+          test -s LICENSE
+          test -s THIRD_PARTY_NOTICES.md
+          grep -q "0.12.0" TESTER-QUICKSTART.md
+          grep -q "operator,yolo" TESTER-QUICKSTART.md
 
       - name: Create GitHub release
         env:
@@ -81,6 +90,9 @@ jobs:
             dist/*.whl \
             dist/*.tar.gz \
             dist/SHA256SUMS.txt \
+            TESTER-QUICKSTART.md \
+            LICENSE \
+            THIRD_PARTY_NOTICES.md \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --generate-notes \

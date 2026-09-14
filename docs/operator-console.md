@@ -167,17 +167,23 @@ metadata compared with image bytes and avoids loading the image collection itsel
 The primary v0.12 endpoints are:
 
 ```text
-GET  /api/health
-GET  /api/jobs
-GET  /api/jobs/{job_id}
-POST /api/jobs/media
-POST /api/local-sources/inspect
-POST /api/jobs/local-sequence
-POST /api/jobs/fusion
-GET  /api/jobs/{job_id}/alerts
-GET  /api/jobs/{job_id}/events
-GET  /api/jobs/{job_id}/artifacts
-GET  /api/jobs/{job_id}/artifacts/{artifact_name}
+GET    /api/health
+GET    /api/jobs
+GET    /api/jobs/{job_id}
+POST   /api/jobs/media
+POST   /api/local-sources/inspect
+POST   /api/jobs/local-sequence
+POST   /api/jobs/fusion
+GET    /api/jobs/{job_id}/alerts
+GET    /api/jobs/{job_id}/events
+GET    /api/jobs/{job_id}/results
+GET    /api/jobs/{job_id}/detections
+GET    /api/jobs/{job_id}/tracks
+GET    /api/jobs/{job_id}/anomalies
+GET    /api/jobs/{job_id}/preview-frame
+GET    /api/jobs/{job_id}/artifacts
+GET    /api/jobs/{job_id}/artifacts/{artifact_name}
+DELETE /api/jobs/{job_id}
 ```
 
 `POST /api/jobs/run` remains as a backward-compatible encoded-video endpoint.
@@ -188,11 +194,54 @@ path, sequence ID, sensor identity, modality, working FPS, frame step, and optio
 The generated run manifest records `imagery_access=read_in_place`, `imagery_copied=false`, source root,
 sequence ID, and sampling controls for read-in-place sources.
 
-## Job/evidence workflow
+## Job and interactive evidence workflow
 
-The job table shows queued, running, completed, and failed work. Selecting a completed run exposes
-summary counts, annotated video, normal CSV evidence, effective configuration, run log, status, and
-manifest. Completed sensor runs can be selected for temporal-consensus fusion.
+The job table shows queued, running, completed, and failed work. Selecting a completed run opens an
+interactive results console rather than requiring the operator to inspect CSV/JSON artifacts manually.
+
+The completed-run view includes:
+
+- summary metrics for frames, detections, tracks, anomalies, events, and alerts;
+- detections-by-class bars and a detections-per-frame trend;
+- interactive **Overview**, **Detections**, **Tracks**, **Anomalies**, **Events / Alerts**, and
+  **Downloads** tabs;
+- storage reporting for generated evidence and Pipeline Sentinel-managed uploaded input;
+- **Delete run & files** cleanup for finished jobs;
+- annotated imagery playback/review.
+
+Completed job detail views remain stable while the queue continues background polling, so selecting a
+results tab or playing annotated imagery is not reset every few seconds.
+
+Deleting a run removes the job record, runtime config, generated evidence, and any browser-uploaded
+source copy owned by Pipeline Sentinel. Read-in-place imagery outside the managed workspace is never
+deleted. Active queued/running jobs cannot be deleted.
+
+### Annotated imagery review
+
+Pipeline Sentinel writes an annotated evidence MP4 and also exposes a codec-independent annotated
+frame route. The current MP4 is encoded through OpenCV with `mp4v`; VLC and other desktop players may
+handle it even when Chrome does not.
+
+When Chrome cannot decode the MP4, the Operator Console automatically provides the **Browse annotated
+frames (codec-safe)** player. It supports:
+
+- Play / Pause;
+- Previous / Next frame;
+- 0.25x / 0.5x / 1x / 2x playback speed;
+- Loop;
+- direct frame scrubbing;
+- current and total timestamp display.
+
+The codec-safe player asks Pipeline Sentinel to decode each annotated frame and deliver it as JPEG, so
+browser review does not depend on the original MP4 codec. Playback is request-driven and therefore
+slows gracefully if local decoding cannot sustain the requested display rate.
+
+Track boxes and captions use a deterministic high-contrast class palette. A given class label maps to
+the same color across runs, and captions use a dark backing rectangle for legibility over bright
+imagery. Alerts and anomalies remain visually emphasized with thicker boxes and explicit caption
+suffixes.
+
+Completed sensor runs can also be selected for temporal-consensus fusion.
 
 The default service uses one analytic worker. This prevents repeated UI clicks from instantiating
 multiple heavyweight model stacks concurrently on a workstation.
@@ -235,7 +284,11 @@ not yet first-class source adapters, raw/radiometric thermal calibration is not 
 generic image-folder path, and unusual proprietary codecs may still fail at the underlying decode
 layer.
 
-See `docs/mvp-acceptance.md` for the release-candidate test procedure and known limitations.
+Native Chrome playback of the generated evidence MP4 is not guaranteed; the codec-safe annotated
+frame player is the supported in-console fallback for v0.12.
+
+See `docs/mvp-acceptance.md` and `TESTER-QUICKSTART.md` for the release-candidate test procedure and
+known limitations.
 
 ## Design rule
 
