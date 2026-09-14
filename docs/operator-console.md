@@ -1,8 +1,9 @@
 # Operator console and local service
 
-Pipeline Sentinel v0.10 introduced the workstation-oriented service/UI layer. v0.11 extends that
-control plane with **read-in-place image-sequence sources** so operators can use large local imagery
-collections without uploading, copying, transcoding, or subsetting them merely to satisfy the UI.
+Pipeline Sentinel v0.10 introduced the workstation-oriented service/UI layer. v0.11 added
+**read-in-place image-sequence sources**. v0.12 unifies browser media and local imagery behind one
+operator-facing **Sensor Ingest** control so file format no longer determines which part of the UI an
+operator must use.
 
 ## Why a service layer
 
@@ -16,7 +17,7 @@ FastAPI service
         |
         +--> persistent job registry
         +--> bounded worker queue
-        +--> encoded-video run API
+        +--> unified browser media run API
         +--> local image-sequence run API
         +--> multisensor fusion API
         +--> artifact / alert API
@@ -36,21 +37,49 @@ uv sync --extra operator --group dev
 uv run pipeline-sentinel-operator --open-browser
 ```
 
+From an installed release wheel:
+
+```powershell
+python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator]"
+pipeline-sentinel-operator --open-browser
+```
+
 The default URL is `http://127.0.0.1:8765/`. OpenAPI documentation is available at `/docs`.
 
-## Source modes
+## Sensor ingest
 
-### Encoded video
+The console exposes one **Start Analysis Run** card with two source modes. Modality and sensor ID are
+shared metadata because EO/IR describes the sensor, not the file container.
 
-The v0.10 video form remains available. Browser-selected `.mp4`, `.mov`, `.avi`, `.mkv`, and `.m4v`
-inputs are copied into the managed upload workspace because browsers provide their bytes rather than a
-trusted server-side filesystem path.
+### Media files
+
+Browser-selected media accepts one encoded video or one-or-more still images.
+
+Supported video extensions in v0.12 are:
+
+```text
+.mp4 .mov .avi .mkv .m4v
+```
+
+Supported still-image extensions are:
+
+```text
+.jpg .jpeg .png .bmp .tif .tiff
+```
+
+A browser submission is one logical run. Do not mix video and image files in the same submission.
+Selected still images are copied into one managed upload directory and processed as an ordered image
+sequence using natural filename ordering. The working FPS supplies runtime timestamps for generic
+still images.
+
+Browser-selected media is copied because browsers provide file bytes rather than a trusted local
+server-side path.
 
 ### Local image folder
 
-The **Local Image Sequence** panel can point directly at a directory of ordered image files. Supported
-extensions include JPEG, PNG, BMP, and TIFF. The folder is read in place. Source imagery is never
-copied into `outputs/operator`.
+For large image collections, switch to **Local folder / dataset** and choose `Image folder`. Point the
+console directly at a directory of ordered image files. The folder is read in place; source imagery
+is never copied into `outputs/operator`.
 
 Generic folders use natural filename ordering and an ordinal runtime frame number. A declared working
 FPS supplies timestamps because ordinary still images do not carry reliable sequence acquisition
@@ -58,7 +87,7 @@ timing.
 
 ### VisDrone2019-VID
 
-Point the console at the existing VisDrone VID dataset root, for example:
+Point the local source at an existing VisDrone VID dataset root, for example:
 
 ```text
 D:\FMV\VisDrone\VisDrone2019-VID-val
@@ -120,36 +149,49 @@ For local image-sequence runs:
 A sorted list of filenames is materialized briefly for deterministic sequence ordering. That is small
 metadata compared with image bytes and avoids loading the image collection itself into memory.
 
-## Local-source API
+## Operator API
+
+The primary v0.12 endpoints are:
 
 ```text
+GET  /api/health
+GET  /api/jobs
+GET  /api/jobs/{job_id}
+POST /api/jobs/media
 POST /api/local-sources/inspect
 POST /api/jobs/local-sequence
+POST /api/jobs/fusion
+GET  /api/jobs/{job_id}/alerts
+GET  /api/jobs/{job_id}/events
+GET  /api/jobs/{job_id}/artifacts
+GET  /api/jobs/{job_id}/artifacts/{artifact_name}
 ```
 
-Inspection reads directory metadata only. A local-sequence job accepts source type, root path,
-sequence ID, sensor identity, modality, working FPS, frame step, and optional frame cap.
+`POST /api/jobs/run` remains as a backward-compatible encoded-video endpoint.
+
+Local-source inspection reads directory metadata only. A local-sequence job accepts source type, root
+path, sequence ID, sensor identity, modality, working FPS, frame step, and optional frame cap.
 
 The generated run manifest records `imagery_access=read_in_place`, `imagery_copied=false`, source root,
-sequence ID, and sampling controls.
+sequence ID, and sampling controls for read-in-place sources.
 
 ## Job/evidence workflow
 
 The job table shows queued, running, completed, and failed work. Selecting a completed run exposes
 summary counts, annotated video, normal CSV evidence, effective configuration, run log, status, and
-manifest. Completed sensor runs can still be selected for v0.9 temporal-consensus fusion.
+manifest. Completed sensor runs can be selected for temporal-consensus fusion.
 
 The default service uses one analytic worker. This prevents repeated UI clicks from instantiating
 multiple heavyweight model stacks concurrently on a workstation.
 
 ## Workspace
 
-The managed workspace remains:
+The managed workspace is:
 
 ```text
 outputs/operator/
 ├── jobs/              persisted operator job records
-├── uploads/           browser-uploaded encoded videos only
+├── uploads/           browser-uploaded media only
 ├── runtime-configs/   validated per-job sensor identity
 ├── runs/              production evidence
 └── fusions/           late-fusion evidence
@@ -171,7 +213,16 @@ authentication, authorization, or TLS termination.
 
 Allowing read-in-place paths is reasonable for a loopback desktop control plane because the operator
 already has local filesystem access. It would be unsafe to expose that capability to remote clients
-without authentication and path authorization, so v0.11 does not do so.
+without authentication and path authorization, so the MVP does not do so.
+
+## MVP boundaries
+
+The v0.12 MVP is intended for controlled workstation testing. Live RTSP/USB/network camera feeds are
+not yet first-class source adapters, raw/radiometric thermal calibration is not performed by the
+generic image-folder path, and unusual proprietary codecs may still fail at the underlying decode
+layer.
+
+See `docs/mvp-acceptance.md` for the release-candidate test procedure and known limitations.
 
 ## Design rule
 
@@ -182,5 +233,5 @@ job orchestration != analytics
 source adapter != copied dataset
 ```
 
-A later desktop shell can add native Windows folder pickers without changing the local-source or
-analytic contracts introduced here.
+A later desktop shell or live-stream adapter can reuse the same frame/runtime contracts without
+changing detector, tracking, event, fusion, or evidence code.
