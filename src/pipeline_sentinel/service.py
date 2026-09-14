@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import mimetypes
+import shutil
 import threading
 import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Literal
+from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .image_sources import LocalSourceType, inspect_local_source
+from .image_sources import IMAGE_SUFFIXES, LocalSourceType, inspect_local_source
+from .operator_jobs import safe_upload_name, validate_video_suffix
 from .operator_local_sources import LocalSourceOperatorJobManager
 
 DEFAULT_MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
@@ -47,6 +50,49 @@ def _http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, (ValueError, RuntimeError)):
         return HTTPException(status_code=400, detail=str(exc))
     return HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
+
+
+def _media_kind(filename: str | None) -> Literal["video", "image"]:
+    """Classify one browser upload using the runtime's supported media suffixes."""
+
+    candidate = Path(filename or "")
+    if candidate.suffix.lower() in IMAGE_SUFFIXES:
+        return "image"
+    try:
+        validate_video_suffix(candidate)
+    except ValueError as exc:
+        allowed_images = ", ".join(sorted(IMAGE_SUFFIXES))
+        raise ValueError(
+            f"unsupported media extension {candidate.suffix!r}; "
+            f"supported image extensions: {allowed_images}; "
+            "or provide a supported encoded video"
+        ) from exc
+    return "video"
+
+
+async def _write_upload(
+    upload: UploadFile,
+    destination: Path,
+    *,
+    total_bytes: int,
+    max_upload_bytes: int,
+) -> int:
+    """Stream one browser upload to disk while enforcing the request-wide byte ceiling."""
+
+    wrote = 0
+    with destination.open("wb") as handle:
+        while chunk := await upload.read(1024 * 1024):
+            wrote += len(chunk)
+            total_bytes += len(chunk)
+            if total_bytes > max_upload_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"upload exceeds configured limit of {max_upload_bytes} bytes",
+                )
+            handle.write(chunk)
+    if wrote == 0:
+        raise HTTPException(status_code=400, detail=f"uploaded media is empty: {destination.name}")
+    return total_bytes
 
 
 def create_app(
@@ -123,12 +169,109 @@ def create_app(
         except Exception as exc:
             raise _http_error(exc) from exc
 
+    @app.post("/api/jobs/media", status_code=202)
+    async def submit_media(
+        files: Annotated[
+            list[UploadFile],
+            File(description="One encoded video or one or more still-image frames"),
+        ],
+        sensor_id: Annotated[str, Form()] = "EO_CAM_01",
+        modality: Annotated[Literal["EO", "IR", "OTHER"], Form()] = "EO",
+        fps: Annotated[float, Form()] = 30.0,
+    ) -> dict[str, object]:
+        """Submit one operator run from a video or an ordered group of still images."""
+
+        if not files:
+            raise HTTPException(status_code=400, detail="select at least one media file")
+        if fps <= 0:
+            raise HTTPException(status_code=400, detail="fps must be positive")
+
+        try:
+            kinds = [_media_kind(upload.filename) for upload in files]
+        except Exception as exc:
+            for upload in files:
+                await upload.close()
+            raise _http_error(exc) from exc
+
+        try:
+            if "video" in kinds:
+                if len(files) != 1 or kinds != ["video"]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="select one video, or select one or more still images; mixed media runs are not supported",
+                    )
+                upload = files[0]
+                try:
+                    upload_path = manager.allocate_upload_path(upload.filename)
+                except Exception as exc:
+                    raise _http_error(exc) from exc
+                try:
+                    await _write_upload(
+                        upload,
+                        upload_path,
+                        total_bytes=0,
+                        max_upload_bytes=max_upload_bytes,
+                    )
+                    job = manager.submit_run(
+                        upload_path,
+                        sensor_id=sensor_id,
+                        modality=modality,
+                    )
+                    return job.to_dict()
+                except HTTPException:
+                    manager.discard_upload(upload_path)
+                    raise
+                except Exception as exc:
+                    manager.discard_upload(upload_path)
+                    raise _http_error(exc) from exc
+
+            upload_dir = manager.uploads_dir / uuid4().hex
+            upload_dir.mkdir(parents=True, exist_ok=False)
+            total_bytes = 0
+            used_names: set[str] = set()
+            try:
+                for index, upload in enumerate(files, start=1):
+                    name = safe_upload_name(upload.filename or f"frame-{index:06d}.jpg")
+                    if name in used_names:
+                        stem = Path(name).stem
+                        suffix = Path(name).suffix
+                        name = f"{stem}-{index:06d}{suffix}"
+                    used_names.add(name)
+                    target = upload_dir / name
+                    total_bytes = await _write_upload(
+                        upload,
+                        target,
+                        total_bytes=total_bytes,
+                        max_upload_bytes=max_upload_bytes,
+                    )
+
+                job = manager.submit_local_sequence(
+                    source_type="image_folder",
+                    source_root=upload_dir,
+                    sequence_id=f"uploaded-images-{upload_dir.name[:8]}",
+                    sensor_id=sensor_id,
+                    modality=modality,
+                    render_fps=fps,
+                )
+                return job.to_dict()
+            except HTTPException:
+                shutil.rmtree(upload_dir, ignore_errors=True)
+                raise
+            except Exception as exc:
+                shutil.rmtree(upload_dir, ignore_errors=True)
+                raise _http_error(exc) from exc
+        finally:
+            for upload in files:
+                await upload.close()
+
     @app.post("/api/jobs/run", status_code=202)
     async def submit_run(
         file: Annotated[UploadFile, File(description="EO/IR video to analyze")],
         sensor_id: Annotated[str, Form()] = "EO_CAM_01",
         modality: Annotated[Literal["EO", "IR", "OTHER"], Form()] = "EO",
     ) -> dict[str, object]:
+        """Backward-compatible encoded-video upload endpoint."""
+
         try:
             upload_path = manager.allocate_upload_path(file.filename)
         except Exception as exc:
