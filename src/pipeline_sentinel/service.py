@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+import cv2
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from . import __version__
@@ -376,6 +377,48 @@ def create_app(
             job = manager.get_job(job_id)
             name = "events_csv" if job.kind == "run" else "fusion_events_csv"
             return manager.tabular_records(job_id, name, limit=limit)
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @app.get("/api/jobs/{job_id}/preview-frame")
+    def job_preview_frame(job_id: str, frame: int = Query(default=0, ge=0)) -> Response:
+        """Return one annotated-video frame as JPEG for codec-independent browser inspection."""
+
+        try:
+            path = manager.artifact_path(job_id, "annotated_video")
+            capture = cv2.VideoCapture(str(path))
+            try:
+                if not capture.isOpened():
+                    raise ValueError(f"could not open annotated video for preview: {path.name}")
+                frame_count = max(0, int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0))
+                if frame_count and frame >= frame_count:
+                    raise ValueError(
+                        f"preview frame {frame} is outside the annotated video (0-{frame_count - 1})"
+                    )
+                if frame:
+                    capture.set(cv2.CAP_PROP_POS_FRAMES, float(frame))
+                ok, image = capture.read()
+                if not ok or image is None:
+                    raise ValueError(f"could not decode annotated preview frame {frame}")
+            finally:
+                capture.release()
+
+            encoded_ok, encoded = cv2.imencode(
+                ".jpg",
+                image,
+                [int(cv2.IMWRITE_JPEG_QUALITY), 88],
+            )
+            if not encoded_ok:
+                raise RuntimeError("could not encode annotated preview frame as JPEG")
+            return Response(
+                content=encoded.tobytes(),
+                media_type="image/jpeg",
+                headers={
+                    "Cache-Control": "private, max-age=3600",
+                    "X-Frame-Index": str(frame),
+                    "X-Frame-Count": str(frame_count),
+                },
+            )
         except Exception as exc:
             raise _http_error(exc) from exc
 
