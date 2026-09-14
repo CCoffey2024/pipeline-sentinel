@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pipeline-sentinel"
 dynamic = ["version"]
-description = "A modular computer-vision application for ingest, detection, tracking, event generation, and human-facing alerts."
+description = "A modular computer-vision application for ingest, detection, tracking, anomaly scoring, event generation, and human-facing alerts."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
@@ -22,6 +22,9 @@ dependencies = [
 yolo = [
   "ultralytics-opencv-headless>=8.4.147,<9",
 ]
+dinov2 = [
+  "torch>=2.2,<3",
+]
 
 [project.urls]
 Repository = "https://github.com/CCoffey2024/pipeline-sentinel"
@@ -35,6 +38,7 @@ dev = [
 
 [project.scripts]
 pipeline-sentinel = "pipeline_sentinel.cli:main"
+pipeline-sentinel-fit-reference = "pipeline_sentinel.reference:main"
 
 [tool.hatch.version]
 path = "src/pipeline_sentinel/__init__.py"
