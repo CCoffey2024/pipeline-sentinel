@@ -3,7 +3,7 @@
 Pipeline Sentinel v0.10 introduced the workstation-oriented service/UI layer. v0.11 added
 **read-in-place image-sequence sources**. v0.12 unifies browser media and local imagery behind one
 operator-facing **Sensor Ingest** control so file format no longer determines which part of the UI an
-operator must use.
+operator must use. v0.13 adds optional DINOv2 representation evidence over sampled YOLO tracks.
 
 ## Why a service layer
 
@@ -44,24 +44,24 @@ From an installed release wheel, the Apache-licensed operator shell can be insta
 Ultralytics:
 
 ```powershell
-python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator]"
+python -m pip install ".\pipeline_sentinel-0.13.0-py3-none-any.whl[operator]"
 pipeline-sentinel-operator --open-browser
 ```
 
-To run the current YOLO production profile, opt in to the separate `yolo` extra as well:
+For a YOLO-only run, install the `yolo` extra and clear **DINOv2 track representations**:
 
 ```powershell
-python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator,yolo]"
+python -m pip install ".\pipeline_sentinel-0.13.0-py3-none-any.whl[operator,yolo]"
 ```
 
-Add `dinov2` to the extras when using track representations:
+For the complete v0.13 production profile, add `dinov2`:
 
 ```powershell
-python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator,yolo,dinov2]"
+python -m pip install ".\pipeline_sentinel-0.13.0-py3-none-any.whl[operator,yolo,dinov2]"
 ```
 
-The optional Ultralytics runtime and model weights retain their own upstream license terms; see
-`THIRD_PARTY_NOTICES.md`.
+The optional Ultralytics and DINOv2 runtimes and model weights retain their own upstream license
+terms; see `THIRD_PARTY_NOTICES.md`.
 
 The default URL is `http://127.0.0.1:8765/`. OpenAPI documentation is available at `/docs`.
 
@@ -78,7 +78,7 @@ it for detector/tracker-only runs.
 
 Browser-selected media accepts one encoded video or one-or-more still images.
 
-Supported video extensions in v0.12 are:
+Supported video extensions in v0.13 are:
 
 ```text
 .mp4 .mov .avi .mkv .m4v
@@ -176,7 +176,7 @@ metadata compared with image bytes and avoids loading the image collection itsel
 
 ## Operator API
 
-The primary v0.12 endpoints are:
+The primary v0.13 endpoints are:
 
 ```text
 GET    /api/health
@@ -293,13 +293,13 @@ without authentication and path authorization, so the MVP does not do so.
 
 ## MVP boundaries
 
-The v0.12 MVP is intended for controlled workstation testing. Live RTSP/USB/network camera feeds are
+The v0.13 MVP is intended for controlled workstation testing. Live RTSP/USB/network camera feeds are
 not yet first-class source adapters, raw/radiometric thermal calibration is not performed by the
 generic image-folder path, and unusual proprietary codecs may still fail at the underlying decode
 layer.
 
 Native Chrome playback of the generated evidence MP4 is not guaranteed; the codec-safe annotated
-frame player is the supported in-console fallback for v0.12.
+frame player is the supported in-console fallback for v0.13.
 
 See `docs/mvp-acceptance.md` and `TESTER-QUICKSTART.md` for the release-candidate test procedure and
 known limitations.

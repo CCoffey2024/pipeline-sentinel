@@ -11,7 +11,7 @@ representation models, fusion policies, delivery layers, and alert logic can cha
 > **Scope:** defensive sensing, detection, tracking, anomaly scoring, sensor fusion, and analyst
 > alerting for a fictional pipeline corridor. No automated engagement or weapons logic.
 
-## Current development milestone — v0.13 representation evidence
+## Current release — v0.13.0 external testing MVP
 
 ```text
 v0.1   ingest + data contracts
@@ -101,7 +101,7 @@ outputs/operator/
 
 Large local image sources are read in place and are not mirrored into the workspace.
 
-The v0.12 MVP service is deliberately local-first. It binds to loopback by default and has no
+The v0.13 MVP service is deliberately local-first. It binds to loopback by default and has no
 authentication or multi-user security model. A non-loopback bind is refused unless `--allow-remote`
 is explicitly supplied. Local-filesystem source APIs are disabled on non-loopback binds. Do not expose
 this version directly to an untrusted network.
@@ -113,29 +113,29 @@ See `docs/operator-console.md` and `docs/mvp-acceptance.md`.
 Core package:
 
 ```powershell
-python -m pip install .\pipeline_sentinel-0.12.0-py3-none-any.whl
+python -m pip install .\pipeline_sentinel-0.13.0-py3-none-any.whl
 ```
 
 Operator application shell:
 
 ```powershell
-python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator]"
+python -m pip install ".\pipeline_sentinel-0.13.0-py3-none-any.whl[operator]"
 pipeline-sentinel-operator --open-browser
 ```
 
-The `operator` extra intentionally does **not** install Ultralytics. The current production detector is
-an optional YOLO provider. To use it, opt in separately:
+The `operator` extra intentionally does **not** install model providers. For the complete v0.13
+production profile, install the YOLO detector and DINOv2 representation extras explicitly:
 
 ```powershell
-python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator,yolo]"
+python -m pip install ".\pipeline_sentinel-0.13.0-py3-none-any.whl[operator,yolo,dinov2]"
 ```
 
 The optional Ultralytics runtime and its model weights are not covered by Pipeline Sentinel's
 Apache-2.0 license; their upstream license terms remain in force. See `THIRD_PARTY_NOTICES.md`.
 
-DINOv2 remains a separate optional extra. The v0.13 development profile uses it for descriptive
-track representations while anomaly scoring remains disabled until a fitted normal-reference
-artifact is supplied.
+DINOv2 remains a separate optional extra. The v0.13 profile uses it for descriptive track
+representations while anomaly scoring remains disabled until a fitted normal-reference artifact is
+supplied.
 
 Model weights and datasets are not vendored into the release artifact. The configured detector model
 may need to be obtained by its upstream runtime on first use.
@@ -401,7 +401,7 @@ pipeline-sentinel/
 
 Useful documentation:
 
-- `docs/mvp-acceptance.md` — v0.12 release-candidate and external tester checklist.
+- `docs/mvp-acceptance.md` — v0.13 release-candidate and external tester checklist.
 - `docs/operator-console.md` — local service, UI, job workspace, API, and security boundary.
 - `docs/architecture.md` — runtime boundaries and contracts.
 - `docs/production-run.md` — config-driven single-sensor execution and provenance.
@@ -415,7 +415,7 @@ Useful documentation:
 
 ## MVP boundaries and development direction
 
-v0.12 is meant to be a shippable **testing MVP**, not the final operator platform. The next source
+v0.13 is a shippable **testing MVP**, not the final operator platform. The next source
 boundary should be first-class live RTSP/USB/network-camera ingestion using the existing lazy
 `FrameContext` contract. Other post-MVP work includes retention controls, richer run inspection,
 browser-compatible video delivery across more codecs, authentication before remote use, and possibly

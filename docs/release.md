@@ -20,7 +20,7 @@ Release tags must be exact semantic-version tags:
 vMAJOR.MINOR.PATCH
 ```
 
-For example, package version `0.12.0` must be released from tag `v0.12.0`.
+For example, package version `0.13.0` must be released from tag `v0.13.0`.
 
 ## Pull-request and CI gate
 
@@ -49,18 +49,20 @@ install dev environment
     -> pytest
     -> build wheel
     -> clean-install wheel with [operator]
-    -> verify Ultralytics is not installed by [operator]
+    -> verify model providers are not installed by [operator]
+    -> verify YOLO/DINOv2 extras are declared in wheel metadata
     -> smoke-test installed operator CLI and API routes
 ```
 
 This means the primary MVP workstation platform and the candidate distribution are exercised before
 merge rather than discovering packaging problems only after a release tag exists.
 
-## v0.12.0 feature freeze
+## v0.13.0 external-test release boundary
 
-The v0.12.0 testing MVP is feature-frozen after successful real-media acceptance of encoded video,
-small uploaded image sequences, larger read-in-place image folders, interactive results, codec-safe
-annotated playback, safe run deletion, and stable class-colored annotations.
+The v0.13.0 testing MVP is feature-frozen after successful real-media acceptance of encoded video,
+mixed-size uploaded image sequences, larger read-in-place image folders, YOLO detection, DINOv2
+representations, interactive results, codec-safe annotated playback, safe run deletion, and stable
+class-colored annotations on the primary Lenovo test workstation.
 
 Before the tag is cut, only release-blocking defect fixes, documentation corrections, and packaging
 corrections should enter the release branch. New capabilities belong in the next development version.
@@ -80,9 +82,9 @@ uv run ruff check .
 uv run pytest
 uv build
 
-# For v0.12.0:
-git tag -a v0.12.0 -m "Pipeline Sentinel v0.12.0"
-git push origin v0.12.0
+# For v0.13.0:
+git tag -a v0.13.0 -m "Pipeline Sentinel v0.13.0"
+git push origin v0.13.0
 ```
 
 Pushing the tag starts `.github/workflows/release.yml`. Before creating the GitHub Release, the job:
@@ -94,9 +96,10 @@ Pushing the tag starts `.github/workflows/release.yml`. Before creating the GitH
 5. installs the core wheel into a clean environment;
 6. verifies package/CLI versions and bundled configuration/UI assets;
 7. clean-installs the same wheel with `[operator]`;
-8. verifies that the operator install does not pull in Ultralytics;
+8. verifies that the operator install does not pull in Ultralytics or PyTorch;
 9. verifies the installed operator command and primary operator API routes;
-10. verifies the external tester quick-start and license-notice files exist before shipment.
+10. verifies the built wheel advertises the YOLO, Torch, and Torchvision optional dependencies;
+11. verifies the external tester quick-start and license-notice files exist before shipment.
 
 Only after those gates pass does the workflow create the GitHub Release and attach the distribution
 artifacts. A failed gate leaves no new release.
@@ -105,13 +108,14 @@ The Windows clean-install gate runs during normal CI before the release commit i
 
 ## Release artifacts
 
-A successful v0.12 release contains files similar to:
+A successful v0.13 release contains files similar to:
 
 ```text
-pipeline_sentinel-0.12.0-py3-none-any.whl
-pipeline_sentinel-0.12.0.tar.gz
+pipeline_sentinel-0.13.0-py3-none-any.whl
+pipeline_sentinel-0.13.0.tar.gz
 SHA256SUMS.txt
 TESTER-QUICKSTART.md
+RELEASE-NOTES.md
 LICENSE
 THIRD_PARTY_NOTICES.md
 ```
@@ -125,7 +129,7 @@ Download the wheel and `SHA256SUMS.txt` from the matching GitHub Release. On Win
 wheel hash before installation:
 
 ```powershell
-Get-FileHash .\pipeline_sentinel-0.12.0-py3-none-any.whl -Algorithm SHA256
+Get-FileHash .\pipeline_sentinel-0.13.0-py3-none-any.whl -Algorithm SHA256
 Get-Content .\SHA256SUMS.txt
 ```
 
@@ -136,29 +140,29 @@ and install the Apache-licensed operator shell:
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator]"
+python -m pip install ".\pipeline_sentinel-0.13.0-py3-none-any.whl[operator]"
 
 pipeline-sentinel --version
 pipeline-sentinel-operator --version
 pipeline-sentinel-operator --open-browser
 ```
 
-The `operator` extra intentionally excludes the optional Ultralytics runtime. To run the current YOLO
-production profile, opt in separately:
+The `operator` extra intentionally excludes model providers. To run the complete production profile,
+opt in to the separate `yolo` and `dinov2` extras:
 
 ```powershell
-python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator,yolo]"
+python -m pip install ".\pipeline_sentinel-0.13.0-py3-none-any.whl[operator,yolo,dinov2]"
 ```
 
-The optional Ultralytics runtime and model weights retain their upstream license terms and are not
-covered by Pipeline Sentinel's Apache-2.0 license. See `THIRD_PARTY_NOTICES.md`.
+The optional Ultralytics and DINOv2 runtimes and model weights retain their upstream license terms
+and are not covered by Pipeline Sentinel's Apache-2.0 license. See `THIRD_PARTY_NOTICES.md`.
 
-The core wheel also intentionally does not install learned detector runtimes. A CLI-only machine can
+The core wheel also intentionally does not install learned model runtimes. A CLI-only machine can
 install the core wheel or the `yolo` extra instead:
 
 ```powershell
-python -m pip install .\pipeline_sentinel-0.12.0-py3-none-any.whl
-python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[yolo]"
+python -m pip install .\pipeline_sentinel-0.13.0-py3-none-any.whl
+python -m pip install ".\pipeline_sentinel-0.13.0-py3-none-any.whl[yolo]"
 ```
 
 Model weights are external runtime assets and are not included in the wheel.
@@ -176,7 +180,7 @@ video/image inputs and record any source-codec or model-loading failures.
 
 Releases are immutable historical artifacts. Do not replace the wheel attached to an existing tag.
 If a defect is found, fix it on `main`, increment the patch version, and cut a new release tag. For
-example, a defect in `v0.12.0` becomes `v0.12.1` rather than a silently replaced `v0.12.0` wheel.
+example, a defect in `v0.13.0` becomes `v0.13.1` rather than a silently replaced `v0.13.0` wheel.
 
 ## What this release process does not claim
 

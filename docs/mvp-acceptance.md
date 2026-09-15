@@ -1,4 +1,4 @@
-# Pipeline Sentinel v0.12 MVP acceptance
+# Pipeline Sentinel v0.13 MVP acceptance
 
 This document defines the **software MVP acceptance boundary** for external workstation testing.
 It is intentionally narrower than operational validation of any detector, anomaly model, tracker,
@@ -46,24 +46,24 @@ media when the underlying encoded file/image format is supported.
 
 Python 3.12 on 64-bit Windows is the tested MVP target. Create a clean virtual environment. The
 Apache-licensed operator shell is the `operator` extra; this acceptance procedure also opts into the
-separate YOLO provider because the current production profile uses it:
+separate YOLO and DINOv2 providers because the current production profile uses both:
 
 ```powershell
 py -3.12 -m venv .venv-mvp
 .\.venv-mvp\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install ".\pipeline_sentinel-0.12.0-py3-none-any.whl[operator,yolo]"
+python -m pip install ".\pipeline_sentinel-0.13.0-py3-none-any.whl[operator,yolo,dinov2]"
 
 pipeline-sentinel --version
 pipeline-sentinel-operator --version
 ```
 
-Both commands should report `0.12.0`.
+Both commands should report `0.13.0`.
 
-The `operator` extra itself does not install Ultralytics. The `yolo` extra is an explicit optional
-provider and remains subject to its upstream license terms. Model weights are not vendored in the
-release artifact; the configured model may need to be obtained by its upstream runtime on first use.
-See `THIRD_PARTY_NOTICES.md`.
+The `operator` extra itself does not install model providers. The `yolo` and `dinov2` extras are
+explicit optional providers and remain subject to their upstream license terms. Model weights are
+not vendored in the release artifact; both providers may retrieve weights on first use. See
+`THIRD_PARTY_NOTICES.md`.
 
 ## Launch acceptance
 
@@ -77,8 +77,9 @@ Expected result:
 
 - browser opens to `http://127.0.0.1:8765/`;
 - health indicator becomes green;
-- version reports `0.12.0`;
+- version reports `0.13.0`;
 - **Sensor Ingest** offers `Media files` and `Local folder / dataset`;
+- **DINOv2 track representations** is selected by default;
 - job queue initially loads without an error.
 
 The MVP is local-first. Do not expose it directly to an untrusted network. There is no authentication
@@ -99,6 +100,9 @@ Expected evidence includes:
 annotated_video.mp4
 detections.csv
 tracks.csv
+representations.csv
+representation_embeddings.f32
+representation_manifest.json
 anomalies.csv
 events.csv
 alerts.csv
@@ -143,13 +147,17 @@ Expected behavior:
 For a completed run, verify:
 
 1. **Overview** shows plausible class and detections-per-frame summaries.
-2. **Detections**, **Tracks**, **Anomalies**, **Events / Alerts**, and **Downloads** remain selectable and do not reset while the queue continues background polling.
+2. **Detections**, **Tracks**, **Representations**, **Anomalies**, **Events / Alerts**, and
+   **Downloads** remain selectable and do not reset while the queue continues background polling.
 3. The codec-safe annotated-frame browser can step through frames.
 4. Play/Pause, Previous/Next, speed controls, Loop, scrubber, and timestamp display work.
 5. Bounding boxes/captions use stable non-white per-class colors and remain readable over the imagery.
 
+6. **Representations** reports sampled tracks, embedding dimension, preceding-sample similarity, and
+   representation change without presenting that change as an anomaly.
+
 If native Chrome playback of `annotated_video.mp4` fails, the codec-safe player is the supported
-v0.12 in-console review path.
+v0.13 in-console review path.
 
 ## Test E — persistence and evidence
 
@@ -199,7 +207,7 @@ sensor timing, event semantics, and deployment-specific assumptions.
 
 ## Automated release gates
 
-Before a v0.12 release is tagged, CI must pass:
+Before a v0.13 release is tagged, CI must pass:
 
 - release/version consistency checks;
 - Ruff lint;
@@ -211,6 +219,7 @@ Before a v0.12 release is tagged, CI must pass:
 - Windows test-suite execution;
 - clean Windows installation of the wheel with `[operator]`;
 - verification that `[operator]` does not install Ultralytics;
+- verification that the wheel declares the `yolo` and `dinov2` dependency extras;
 - import/route smoke test of the installed operator service.
 
 The tag-driven release workflow repeats lint/tests/build and clean-installs both the core wheel and
@@ -232,6 +241,7 @@ These are intentional boundaries, not hidden claims:
 - raw/radiometric thermal calibration is not performed by the generic image-folder adapter;
 - DINOv2 anomaly scoring remains disabled by default until a deployment provides a fitted normal
   reference artifact;
+- DINOv2 representation inference may be substantially slower on CPU-only workstations;
 - software acceptance does not establish detector/tracker/anomaly accuracy for a particular mission.
 
 ## Tester feedback to capture
@@ -244,7 +254,8 @@ For every failed or confusing run, record:
 - source type, extension/container, approximate resolution, and frame count/duration;
 - EO/IR modality and sensor ID used;
 - exact operator error message;
-- `run_status.json` and `run_log.jsonl` when created;
+- `run_status.json`, `run_log.jsonl`, `run_manifest.json`, and, for DINOv2 issues,
+  `representation_manifest.json` when created;
 - whether the failure occurred during ingest, model loading, inference, rendering, playback/review,
   cleanup, or artifact access.
 
