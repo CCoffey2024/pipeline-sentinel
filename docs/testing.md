@@ -44,13 +44,13 @@ The automated service tests verify:
 
 For real workstation media and a clean installed wheel, follow `docs/mvp-acceptance.md`.
 
-## Optional YOLO workstation acceptance
+## Optional learned-model workstation acceptance
 
-The deterministic test environment does **not** run real learned-model inference. Validate that
-separately on a machine where inference is intended to run:
+The deterministic test environment does **not** run real learned-model inference. Validate the
+complete YOLO plus DINOv2 profile separately on a machine where inference is intended to run:
 
 ```powershell
-uv sync --extra yolo --group dev
+uv sync --extra yolo --extra dinov2 --group dev
 ```
 
 An ordinary encoded video can be processed with:
@@ -65,6 +65,11 @@ uv run pipeline-sentinel run-yolo input.mp4 `
 
 YOLO detections are tracked by default. `events.csv` and `alerts.csv` may legitimately contain only
 headers when no event policy fires.
+
+For an operator-console acceptance run, leave **DINOv2 track representations** selected and verify
+that `representations.csv`, `representation_embeddings.f32`, and
+`representation_manifest.json` are produced. DINOv2 representation changes are evidence; they are
+not promoted directly into events or alerts.
 
 To explicitly exercise a learned-detector temporal rule:
 
@@ -98,6 +103,11 @@ anomaly-observation, and alert contracts are exercised by their owning component
 
 `test_yolo.py` injects a fake model and proves that the optional provider runtime is normalized into
 portable detections without requiring model weights, Torch, a GPU, or network access.
+
+### Representation contract
+
+The representation tests inject a fake embedder and verify track sampling, binary embedding layout,
+manifest metadata, and downstream evidence semantics without downloading DINOv2 weights.
 
 ### Tracking
 
@@ -165,8 +175,9 @@ generates checksums, clean-installs the core wheel, and smoke-tests packaged CLI
 adapters.
 
 The Windows MVP job independently runs lint/tests/build and then clean-installs the built wheel with
-`[operator]`. It verifies the installed operator command and primary media/local-source routes. This
-is the packaging gate most representative of the current workstation MVP target.
+`[operator]`. It verifies the installed operator command, primary media/local-source and
+representation routes, and confirms that the operator shell does not silently install either model
+provider. Wheel metadata independently verifies the `yolo` and `dinov2` extras.
 
 A failing CI run is a repository-level regression even if a notebook or developer checkout still
 happens to execute.

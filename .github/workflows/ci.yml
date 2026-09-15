@@ -36,7 +36,8 @@ jobs:
           .wheel-test/bin/pipeline-sentinel-operator --help > /dev/null
           .wheel-test/bin/python -c "from pathlib import Path; import pipeline_sentinel; p=Path(pipeline_sentinel.__file__).parent / 'web'; assert (p / 'operator.html').is_file() and (p / 'local-sources.js').is_file() and (p / 'results-console.js').is_file()"
           .wheel-test/bin/python -c "from pipeline_sentinel.image_sources import UavdtDataset, ImageFolderSequence; assert UavdtDataset and ImageFolderSequence"
-          .wheel-test/bin/python -c "from pipeline_sentinel.config import load_production_config; c, _ = load_production_config(); assert c.detector.imgsz == 960 and c.anomaly.enabled is False"
+          .wheel-test/bin/python -c "from pipeline_sentinel.config import load_production_config; c, _ = load_production_config(); assert c.detector.imgsz == 960 and c.representation.enabled is True and c.representation.model == 'dinov2_vits14' and c.anomaly.enabled is False"
+          .wheel-test/bin/python -c "from importlib.metadata import requires; deps='\n'.join(requires('pipeline-sentinel') or []).lower(); assert 'ultralytics-opencv-headless' in deps and 'torch' in deps and 'torchvision' in deps"
           .wheel-test/bin/python -c "from pipeline_sentinel.fusion import load_fusion_config; c, _ = load_fusion_config(); assert c.strategy == 'temporal_consensus' and c.min_sensors == 2"
       - name: Upload candidate distributions
         uses: actions/upload-artifact@v4
@@ -78,6 +79,7 @@ jobs:
           & .\.operator-wheel-test\Scripts\python.exe -m pip install "$($wheel.FullName)[operator]"
           & .\.operator-wheel-test\Scripts\pipeline-sentinel.exe --version
           & .\.operator-wheel-test\Scripts\pipeline-sentinel-operator.exe --version
-          & .\.operator-wheel-test\Scripts\python.exe -c "import importlib.util; assert importlib.util.find_spec('ultralytics') is None, 'operator extra must not install Ultralytics'"
+          & .\.operator-wheel-test\Scripts\python.exe -c "import importlib.util; assert importlib.util.find_spec('ultralytics') is None and importlib.util.find_spec('torch') is None, 'operator extra must not install model providers'"
           & .\.operator-wheel-test\Scripts\python.exe -c "from pathlib import Path; import pipeline_sentinel; p=Path(pipeline_sentinel.__file__).parent / 'web'; assert (p / 'operator.html').is_file() and (p / 'local-sources.js').is_file() and (p / 'results-console.js').is_file()"
-          & .\.operator-wheel-test\Scripts\python.exe -c "from pathlib import Path; from pipeline_sentinel.service import create_app; app=create_app(workspace=Path('.operator-smoke')); paths={getattr(r, 'path', None) for r in app.routes}; assert '/api/jobs/media' in paths; assert '/api/jobs/local-sequence' in paths; app.state.job_manager.close()"
+          & .\.operator-wheel-test\Scripts\python.exe -c "from pathlib import Path; from pipeline_sentinel.service import create_app; app=create_app(workspace=Path('.operator-smoke')); paths=set(app.openapi()['paths']); assert '/api/jobs/media' in paths; assert '/api/jobs/local-sequence' in paths; assert '/api/jobs/{job_id}/representations' in paths; app.state.job_manager.close()"
+          & .\.operator-wheel-test\Scripts\python.exe -c "from importlib.metadata import requires; deps='\n'.join(requires('pipeline-sentinel') or []).lower(); assert 'ultralytics-opencv-headless' in deps and 'torch' in deps and 'torchvision' in deps"

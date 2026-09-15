@@ -13,17 +13,17 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def is_release_artifact(path: Path) -> bool:
+    return path.is_file() and (path.suffix == ".whl" or path.name.endswith(".tar.gz"))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate SHA256SUMS.txt for release artifacts")
     parser.add_argument("directory", type=Path, nargs="?", default=Path("dist"))
     args = parser.parse_args()
 
     directory = args.directory.resolve()
-    artifacts = sorted(
-        path
-        for path in directory.iterdir()
-        if path.is_file() and path.name != "SHA256SUMS.txt"
-    )
+    artifacts = sorted(path for path in directory.iterdir() if is_release_artifact(path))
     if not artifacts:
         raise SystemExit(f"No release artifacts found in {directory}")
 
